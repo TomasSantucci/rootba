@@ -283,7 +283,8 @@ cmake ../../ceres-solver "${COMMON_CMAKE_ARGS[@]}" \
     -DBUILD_EXAMPLES=OFF \
     -DBUILD_TESTING=OFF \
     -DBUILD_BENCHMARKS=OFF \
-    -DEXPORT_BUILD_DIR=OFF
+    -DEXPORT_BUILD_DIR=OFF \
+    -DCXSPARSE=OFF
 make -j$NUM_PARALLEL_BUILDS ceres
 make install
 popd

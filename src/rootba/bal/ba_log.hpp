@@ -37,6 +37,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <string>
 #include <vector>
+#include <cstdint>
 
 #include <visit_struct/visit_struct_intrusive.hpp>
 

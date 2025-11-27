@@ -71,6 +71,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <string>
 #include <vector>
+#include <cstdint>
 
 #include "rootba/bal/residual_info.hpp"
 

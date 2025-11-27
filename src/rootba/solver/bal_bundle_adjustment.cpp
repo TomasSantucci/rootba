@@ -168,6 +168,7 @@ double compute_cost_decrease(
     default:
       LOG(FATAL) << "unreachable";
   }
+  return 0;
 }
 
 // check termination based on change in cost value
@@ -219,6 +220,7 @@ std::string format_new_error_info(
     default:
       LOG(FATAL) << "unreachable";
   }
+  return "unreachable";
 }
 
 void check_options(const SolverOptions& options) {

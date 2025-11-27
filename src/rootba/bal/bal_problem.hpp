@@ -74,7 +74,7 @@ class BalProblem {
   using CameraModel = basalt::BalCamera<Scalar>;
 
   struct Observation {
-    Vec2 pos;
+    Vec2 pos = Vec2::Zero();
   };
 
   struct Camera {

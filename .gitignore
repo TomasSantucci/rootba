@@ -16,3 +16,4 @@ __pycache__
 # generic:
 .DS_Store
 *~
+.cache
