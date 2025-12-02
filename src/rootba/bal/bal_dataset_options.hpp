@@ -42,7 +42,7 @@ namespace rootba {
 /// Options related to loading a dataset and preprocessing it before
 /// optimization (normalization, state perturbations, etc)
 struct BalDatasetOptions : public VisitableOptions<BalDatasetOptions> {
-  WISE_ENUM_CLASS_MEMBER(DatasetType, (AUTO, 0), ROOTBA, BAL, BUNDLER);
+  WISE_ENUM_CLASS_MEMBER(DatasetType, (AUTO, 0), ROOTBA, BAL, BUNDLER, COLMAP);
 
   BEGIN_VISITABLES(BalDatasetOptions);
 

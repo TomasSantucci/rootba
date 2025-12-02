@@ -122,12 +122,15 @@ T median_destructive(std::vector<T>& data) {
 }
 
 BalDatasetOptions::DatasetType autodetect_input_type(const std::string& path) {
+  using std::filesystem::is_directory;
   const std::string filename = std::filesystem::path(path).filename();
 
   if (ends_with(filename, ".cereal")) {
     return BalDatasetOptions::DatasetType::ROOTBA;
   } else if (std::string::npos != filename.find("bundle")) {
     return BalDatasetOptions::DatasetType::BUNDLER;
+  } else if (is_directory(path) && is_directory(path + "/sparse")) {
+    return BalDatasetOptions::DatasetType::COLMAP;
   } else {
     // default to BAL
     return BalDatasetOptions::DatasetType::BAL;
@@ -401,6 +404,129 @@ void BalProblem<Scalar>::load_bundler(const std::string& path) {
   CHECK_LT(num_cameras(), std::numeric_limits<int>::max() / CAM_STATE_SIZE);
 
   std::fclose(fptr);
+}
+
+template <typename Scalar>
+void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
+  using Quaternion = Eigen::Quaternion<Scalar>;
+  using std::getline;
+  using std::ifstream;
+  using std::istringstream;
+  using std::string;
+  using std::unordered_map;
+  using std::filesystem::is_directory;
+  using std::filesystem::path;
+
+  path dir = path{path_str} / "sparse" / "0";
+  if (!is_directory(dir)) {
+    LOG(FATAL) << "Invalid COLMAP dataset '{}'"_format(dir.string());
+  }
+
+  cameras_.clear();
+  landmarks_.clear();
+
+  // Read images.txt
+  /* Example format:
+  # Image list with two lines of data per image:
+  #   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
+  #   POINTS2D[] as (X, Y, POINT3D_ID)
+  # Number of images: 2, mean observations per image: 2
+  1 0.851773 0.0165051 0.503764 -0.142941 -0.737434 1.02973 3.74354 1
+  P1180141.JPG 2362.39 248.498 58396 1784.7 268.254 59027 1784.7 268.254 -1 2
+  0.851773 0.0165051 0.503764 -0.142941 -0.737434 1.02973 3.74354 1 P1180142.JPG
+  1190.83 663.957 23056 1258.77 640.354 59070
+  */
+  try {
+    unordered_map<int, size_t> pid_to_idx{};
+
+    path images_txt = dir / "images.txt";
+    ifstream f(images_txt);
+    string line;
+    while (getline(f, line)) {
+      if (line.empty() || line[0] == '#') continue;
+
+      istringstream ss(line);
+
+      int image_id = 0;
+      Scalar qw = 0;
+      Scalar qx = 0;
+      Scalar qy = 0;
+      Scalar qz = 0;
+      Scalar tx = 0;
+      Scalar ty = 0;
+      Scalar tz = 0;
+      int camera_id = 0;
+      string image_name;
+      ss >> image_id >> qw >> qx >> qy >> qz >> tx >> ty >> tz >> camera_id >>
+          image_name;
+
+      if (cameras_.size() <= size_t(image_id)) cameras_.resize(image_id + 1);
+
+      Camera& cam = cameras_.at(image_id);
+      cam.T_c_w.so3() = SO3(Quaternion(qw, qx, qy, qz));
+      cam.T_c_w.translation() = Vec3{tx, ty, tz};
+      cam.intrinsics = CameraModel();
+      // TODO@mateosss: get intrinsics from cameras.txt
+      // TODO@mateosss: use axis_inversion?
+
+      getline(f, line);
+      ss = istringstream(line);
+      while (!ss.eof()) {
+        Scalar x = 0;
+        Scalar y = 0;
+        int pid = 0;
+        ss >> x >> y >> pid;
+        if (pid < 0) continue;
+
+        int lmidx = -1;
+        if (pid_to_idx.find(pid) == pid_to_idx.end()) {
+          pid_to_idx[pid] = landmarks_.size();
+          landmarks_.emplace_back();
+          lmidx = landmarks_.size() - 1;
+        } else {
+          lmidx = pid_to_idx[pid];
+        }
+
+        // Note that we don't do "try_emplace" as other loaders since colmap can
+        // have multiple observations of the same point in one image
+        landmarks_.at(lmidx).obs[image_id] = Observation{{x, y}};
+        // TODO@mateosss: invert y axis?
+      }
+    }
+
+    // Read points3D.txt
+    /* points3D.txt example format:
+    # 3D point list with one line of data per point:
+    #   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)
+    # Number of points: 3, mean track length: 3.3334
+    63390 1.67241 0.292931 0.609726 115 121 122 1.33927 16 6542 15 7345 6 6714
+    14 7227 63376 2.01848 0.108877 -0.0260841 102 209 250 1.73449 16 6519 15
+    7322 14 7212 8 3991 63371 1.71102 0.28566 0.53475 245 251 249 0.612829 118
+    4140 117 12
+    */
+    path points3d_txt = dir / "points3D.txt";
+    f = ifstream{points3d_txt};
+    while (getline(f, line)) {
+      if (line.empty() || line[0] == '#') continue;
+
+      istringstream ss(line);
+      int pid = 0;
+      Scalar x = 0;
+      Scalar y = 0;
+      Scalar z = 0;
+      Scalar r = 0;
+      Scalar g = 0;
+      Scalar b = 0;
+      Scalar error = 0;
+      ss >> pid >> x >> y >> z >> r >> g >> b >> error;
+      landmarks_.at(pid_to_idx.at(pid)).p_w = {x, y, z};
+    }
+
+  } catch (const std::exception& e) {
+    LOG(FATAL) << "Failed to parse '{}'"_format(dir.string());
+  }
+
+  save_rootba(path_str + ".bal.txt");
 }
 
 template <typename Scalar>
@@ -803,6 +929,9 @@ BalProblem<Scalar> load_normalized_bal_problem(
       break;
     case BalDatasetOptions::DatasetType::BUNDLER:
       bal_problem.load_bundler(options.input);
+      break;
+    case BalDatasetOptions::DatasetType::COLMAP:
+      bal_problem.load_colmap(options.input);
       break;
     default:
       LOG(FATAL) << "unreachable";

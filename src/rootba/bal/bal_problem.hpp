@@ -163,6 +163,7 @@ class BalProblem {
 
   void load_bal(const std::string& path);
   void load_bundler(const std::string& path);
+  void load_colmap(const std::string& path);
 
   bool load_rootba(const std::string& path);
   bool save_rootba(const std::string& path);

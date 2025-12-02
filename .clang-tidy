@@ -1,4 +1,4 @@
-Checks: 'readability-*, -readability-magic-numbers, -readability-function-cognitive-complexity, -readability-else-after-return, -readability-redundant-access-specifiers, -readability-implicit-bool-conversion, performance-*, modernize-*, -modernize-use-trailing-return-type, -modernize-avoid-c-arrays, -modernize-use-nodiscard, -modernize-pass-by-value, misc-assert-side-effect, -clang-analyzer-osx.*, -clang-analyzer-cplusplus.Move, -clang-analyzer-core.uninitialized.UndefReturn, -clang-analyzer-optin.portability.UnixAPI, -clang-analyzer-unix.Malloc'
+Checks: 'readability-*, -readability-identifier-length, -readability-braces-around-statements, -readability-magic-numbers, -readability-function-cognitive-complexity, -readability-else-after-return, -readability-redundant-access-specifiers, -readability-implicit-bool-conversion, performance-*, modernize-*, -modernize-use-trailing-return-type, -modernize-avoid-c-arrays, -modernize-use-nodiscard, -modernize-pass-by-value, misc-assert-side-effect, -clang-analyzer-osx.*, -clang-analyzer-cplusplus.Move, -clang-analyzer-core.uninitialized.UndefReturn, -clang-analyzer-optin.portability.UnixAPI, -clang-analyzer-unix.Malloc'
 WarningsAsErrors: '*'
 HeaderFilterRegex: 'src/rootba/.*|src/app/.*'
 
@@ -90,4 +90,3 @@ CheckOptions:
     value:   '1'
   - key:     readability-implicit-bool-conversion.AllowIntegerConditions
     value:   '1'
-

@@ -83,7 +83,7 @@ OPTIONS:
 
             --input-type
             <ENUM>    type of dataset to load
-                      (possible values: [AUTO, ROOTBA, BAL, BUNDLER])
+                      (possible values: [AUTO, ROOTBA, BAL, BUNDLER, COLMAP])
             --save-output|--no-save-output
                       save optimization result
 
