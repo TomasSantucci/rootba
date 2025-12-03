@@ -426,7 +426,7 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
   landmarks_.clear();
 
   try {
-    unordered_map<int, size_t> pid_to_idx{};
+    unordered_map<ssize_t, size_t> pid_to_idx{};
 
     // Read cameras.txt
     /* Example format:
@@ -444,7 +444,7 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
       Scalar k1;
       Scalar k2;
     };
-    unordered_map<int, ColmapCamera> colmap_cameras;
+    unordered_map<ssize_t, ColmapCamera> colmap_cameras;
 
     path cameras_txt = dir / "cameras.txt";
     ifstream f(cameras_txt);
@@ -454,11 +454,12 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
 
       istringstream ss(line);
 
-      int camera_id = 0;
+      ssize_t camera_id = 0;
       string model;
-      int width = 0;
-      int height = 0;
-      ss >> camera_id >> model >> width >> height;
+      ssize_t width = 0;
+      ssize_t height = 0;
+      bool read = bool(ss >> camera_id >> model >> width >> height);
+      CHECK(read) << "cameras.txt: '{}'"_format(line);
       camera_id -= 1;  // COLMAP camera IDs are 1-based
 
       if (model == "SIMPLE_RADIAL") {
@@ -466,7 +467,8 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
         Scalar cx = 0;
         Scalar cy = 0;
         Scalar k1 = 0;
-        ss >> f >> cx >> cy >> k1;
+        bool read = bool(ss >> f >> cx >> cy >> k1);
+        CHECK(read) << "cameras.txt: '{}'"_format(line);
         colmap_cameras[camera_id] = ColmapCamera{f, cx, cy, k1, 0};
       } else {
         LOG(FATAL) << "Not implemented: COLMAP camera model '{}'"_format(model);
@@ -491,7 +493,7 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
 
       istringstream ss(line);
 
-      int image_id = 0;
+      ssize_t image_id = 0;
       Scalar qw = 0;
       Scalar qx = 0;
       Scalar qy = 0;
@@ -499,10 +501,11 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
       Scalar tx = 0;
       Scalar ty = 0;
       Scalar tz = 0;
-      int camera_id = 0;
+      ssize_t camera_id = 0;
       string image_name;
-      ss >> image_id >> qw >> qx >> qy >> qz >> tx >> ty >> tz >> camera_id >>
-          image_name;
+      bool read = bool(ss >> image_id >> qw >> qx >> qy >> qz >> tx >> ty >>
+                       tz >> camera_id >> image_name);
+      CHECK(read) << "images.txt: '{}'"_format(line);
 
       // Convert COLMAP id to zero-based index
       camera_id -= 1;
@@ -510,21 +513,22 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
       if (cameras_.size() <= size_t(image_id)) cameras_.resize(image_id + 1);
 
       Camera& cam = cameras_.at(image_id);
+      CHECK(colmap_cameras.find(camera_id) != colmap_cameras.end())
+          << "missing camera_id=" << camera_id;
       ColmapCamera& colcam = colmap_cameras.at(camera_id);
       cam.T_c_w.so3() = SO3(Quaternion(qw, qx, qy, qz));
       cam.T_c_w.translation() = Vec3{tx, ty, tz};
       cam.intrinsics = CameraModel({colcam.f, colcam.k1, colcam.k2});
-      // TODO@mateosss: use axis_inversion?
 
       getline(f, line);
       ss = istringstream(line);
       Scalar x = 0;
       Scalar y = 0;
-      int pid = 0;
+      ssize_t pid = 0;
       while (ss >> x >> y >> pid) {
         if (pid <= 0) continue;
 
-        int lmidx = -1;
+        size_t lmidx = -1;
         if (pid_to_idx.find(pid) == pid_to_idx.end()) {
           pid_to_idx[pid] = landmarks_.size();
           landmarks_.emplace_back();
@@ -554,7 +558,7 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
       if (line.empty() || line[0] == '#') continue;
 
       istringstream ss(line);
-      int pid = 0;
+      ssize_t pid = 0;
       Scalar x = 0;
       Scalar y = 0;
       Scalar z = 0;
@@ -562,12 +566,16 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
       Scalar g = 0;
       Scalar b = 0;
       Scalar error = 0;
-      ss >> pid >> x >> y >> z >> r >> g >> b >> error;
+      bool read = bool(ss >> pid >> x >> y >> z >> r >> g >> b >> error);
+      CHECK(read) << "points3D.txt: '{}'"_format(line);
+      CHECK(pid_to_idx.find(pid) != pid_to_idx.end()) << "missing pid=" << pid;
       landmarks_.at(pid_to_idx.at(pid)).p_w = {x, y, z};
     }
 
   } catch (const std::exception& e) {
-    LOG(FATAL) << "Failed to parse '{}'"_format(dir.string());
+    LOG(ERROR)
+        << "Exception caught while loading COLMAP dataset '{}'\n'{}'"_format(
+               dir.string(), e.what());
   }
 }
 
