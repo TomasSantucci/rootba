@@ -425,23 +425,67 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
   cameras_.clear();
   landmarks_.clear();
 
-  // Read images.txt
-  /* Example format:
-  # Image list with two lines of data per image:
-  #   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
-  #   POINTS2D[] as (X, Y, POINT3D_ID)
-  # Number of images: 2, mean observations per image: 2
-  1 0.851773 0.0165051 0.503764 -0.142941 -0.737434 1.02973 3.74354 1
-  P1180141.JPG 2362.39 248.498 58396 1784.7 268.254 59027 1784.7 268.254 -1 2
-  0.851773 0.0165051 0.503764 -0.142941 -0.737434 1.02973 3.74354 1 P1180142.JPG
-  1190.83 663.957 23056 1258.77 640.354 59070
-  */
   try {
     unordered_map<int, size_t> pid_to_idx{};
 
-    path images_txt = dir / "images.txt";
-    ifstream f(images_txt);
+    // Read cameras.txt
+    /* Example format:
+    # Camera list with one line of data per camera:
+    #   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]
+    # Number of cameras: 3
+    1 SIMPLE_PINHOLE 3072 2304 2559.81 1536 1152
+    2 PINHOLE 3072 2304 2560.56 2560.56 1536 1152
+    3 SIMPLE_RADIAL 3072 2304 2559.69 1536 1152 -0.0218531
+    */
+    struct ColmapCamera {
+      Scalar f;
+      Scalar cx;
+      Scalar cy;
+      Scalar k1;
+      Scalar k2;
+    };
+    unordered_map<int, ColmapCamera> colmap_cameras;
+
+    path cameras_txt = dir / "cameras.txt";
+    ifstream f(cameras_txt);
     string line;
+    while (getline(f, line)) {
+      if (line.empty() || line[0] == '#') continue;
+
+      istringstream ss(line);
+
+      int camera_id = 0;
+      string model;
+      int width = 0;
+      int height = 0;
+      ss >> camera_id >> model >> width >> height;
+      camera_id -= 1;  // COLMAP camera IDs are 1-based
+
+      if (model == "SIMPLE_RADIAL") {
+        Scalar f = 0;
+        Scalar cx = 0;
+        Scalar cy = 0;
+        Scalar k1 = 0;
+        ss >> f >> cx >> cy >> k1;
+        colmap_cameras[camera_id] = ColmapCamera{f, cx, cy, k1, 0};
+      } else {
+        LOG(FATAL) << "Not implemented: COLMAP camera model '{}'"_format(model);
+      }
+    }
+
+    // Read images.txt
+    /* Example format:
+    # Image list with two lines of data per image:
+    #   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
+    #   POINTS2D[] as (X, Y, POINT3D_ID)
+    # Number of images: 2, mean observations per image: 2
+    1 0.851773 0.0165051 0.503764 -0.142941 -0.737434 1.02973 3.74354 1
+    P1180141.JPG 2362.39 248.498 58396 1784.7 268.254 59027 1784.7 268.254 -1 2
+    0.851773 0.0165051 0.503764 -0.142941 -0.737434 1.02973 3.74354 1
+    P1180142.JPG 1190.83 663.957 23056 1258.77 640.354 59070
+    */
+    path images_txt = dir / "images.txt";
+    f = ifstream{images_txt};
     while (getline(f, line)) {
       if (line.empty() || line[0] == '#') continue;
 
@@ -460,13 +504,16 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
       ss >> image_id >> qw >> qx >> qy >> qz >> tx >> ty >> tz >> camera_id >>
           image_name;
 
+      // Convert COLMAP id to zero-based index
+      camera_id -= 1;
+      image_id -= 1;
       if (cameras_.size() <= size_t(image_id)) cameras_.resize(image_id + 1);
 
       Camera& cam = cameras_.at(image_id);
+      ColmapCamera& colcam = colmap_cameras.at(camera_id);
       cam.T_c_w.so3() = SO3(Quaternion(qw, qx, qy, qz));
       cam.T_c_w.translation() = Vec3{tx, ty, tz};
-      cam.intrinsics = CameraModel();
-      // TODO@mateosss: get intrinsics from cameras.txt
+      cam.intrinsics = CameraModel({colcam.f, colcam.k1, colcam.k2});
       // TODO@mateosss: use axis_inversion?
 
       getline(f, line);
@@ -487,10 +534,8 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
           lmidx = pid_to_idx[pid];
         }
 
-        // Note that we don't do "try_emplace" as other loaders since colmap can
-        // have multiple observations of the same point in one image
-        landmarks_.at(lmidx).obs[image_id] = Observation{{x, y}};
-        // TODO@mateosss: invert y axis?
+        // Note: colmap can have >1 obs of same point in one image, use last one
+        landmarks_.at(lmidx).obs[image_id] = {{x - colcam.cx, y - colcam.cy}};
       }
     }
 
