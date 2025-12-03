@@ -518,12 +518,11 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
 
       getline(f, line);
       ss = istringstream(line);
-      while (!ss.eof()) {
-        Scalar x = 0;
-        Scalar y = 0;
-        int pid = 0;
-        ss >> x >> y >> pid;
-        if (pid < 0) continue;
+      Scalar x = 0;
+      Scalar y = 0;
+      int pid = 0;
+      while (ss >> x >> y >> pid) {
+        if (pid <= 0) continue;
 
         int lmidx = -1;
         if (pid_to_idx.find(pid) == pid_to_idx.end()) {
@@ -570,8 +569,6 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
   } catch (const std::exception& e) {
     LOG(FATAL) << "Failed to parse '{}'"_format(dir.string());
   }
-
-  save_rootba(path_str + ".bal.txt");
 }
 
 template <typename Scalar>
