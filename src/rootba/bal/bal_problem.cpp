@@ -569,7 +569,9 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
       bool read = bool(ss >> pid >> x >> y >> z >> r >> g >> b >> error);
       CHECK(read) << "points3D.txt: '{}'"_format(line);
       CHECK(pid_to_idx.find(pid) != pid_to_idx.end()) << "missing pid=" << pid;
-      landmarks_.at(pid_to_idx.at(pid)).p_w = {x, y, z};
+      Landmark& lm = landmarks_.at(pid_to_idx.at(pid));
+      lm.p_w = {x, y, z};
+      lm.color = {uint8_t(r), uint8_t(g), uint8_t(b)};
     }
 
   } catch (const std::exception& e) {

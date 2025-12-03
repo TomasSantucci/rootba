@@ -73,9 +73,12 @@ void BalMapDisplay::update(const BalProblem<Scalar>& bal_problem) {
   // update points
   const auto& lmids = bal_problem.landmarks();
   points_.clear();
+  colors_.clear();
   points_.reserve(lmids.size());
+  colors_.reserve(lmids.size());
   for (const auto& lmid : lmids) {
     points_.push_back(lmid.p_w.template cast<float>());
+    colors_.emplace_back(lmid.color);
   }
 
   // update flag to ensure that buffers are updated on next draw
@@ -117,6 +120,8 @@ bool BalMapDisplay::update_buffers() {
 
   vertex_buffer_.Clear();
   vertex_buffer_.Update(points_);
+  color_buffer_.Clear();
+  color_buffer_.Update(colors_);
 
   need_buffer_update_ = false;
   return true;
@@ -135,29 +140,34 @@ void BalFrameDisplay::draw_camera(bool selected,
 
 void BalMapDisplay::draw_pointcloud(bool selected,
                                     const BalMapDisplay::Options& options) {
+  UNUSED(selected);
   if (vertex_buffer_.size() == 0) {
     return;
   }
 
+  CHECK(color_buffer_.size() == vertex_buffer_.size());
+
   glDisable(GL_LIGHTING);
 
   int point_size = options.point_size;
-  if (selected) {
-    glColor3ubv(G_COLOR_SELECTED);
-    point_size += 2;
-  } else {
-    glColor3ubv(G_COLOR_POINTS);
-  }
 
   glPointSize(point_size);
 
   vertex_buffer_.Bind();
   glVertexPointer(vertex_buffer_.count_per_element, vertex_buffer_.datatype, 0,
                   nullptr);
+
+  color_buffer_.Bind();
+  glColorPointer(color_buffer_.count_per_element, color_buffer_.datatype, 0,
+                 nullptr);
+
   glEnableClientState(GL_VERTEX_ARRAY);
+  glEnableClientState(GL_COLOR_ARRAY);
   glDrawArrays(GL_POINTS, 0, vertex_buffer_.size());
   glDisableClientState(GL_VERTEX_ARRAY);
+  glDisableClientState(GL_COLOR_ARRAY);
   vertex_buffer_.Unbind();
+  color_buffer_.Unbind();
 }
 
 template void BalMapDisplay::update(const BalProblem<double>& bal_problem);

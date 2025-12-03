@@ -35,6 +35,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 #pragma once
 
+#include <cstdint>
 #include <map>
 
 #include <basalt/camera/bal_camera.hpp>
@@ -134,6 +135,7 @@ class BalProblem {
 
   struct Landmark {
     Vec3 p_w;                             // point position in world coordinates
+    Eigen::Vector3<uint8_t> color;        // RGB color
     std::map<FrameIdx, Observation> obs;  // list of frame indices
 
     void backup() { p_w_backup_ = p_w; }

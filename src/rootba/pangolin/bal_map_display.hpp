@@ -69,6 +69,7 @@ class BalMapDisplay {
   std::vector<std::unique_ptr<BalFrameDisplay>> frames_;
 
   std::vector<Vec3f> points_;
+  std::vector<Eigen::Vector3<uint8_t>> colors_;
 
   static constexpr int MAX_BUFFER_UPDATES = 100;
 
@@ -77,6 +78,9 @@ class BalMapDisplay {
   pangolin::GlSizeableBuffer vertex_buffer_{pangolin::GlArrayBuffer,
                                             INITIAL_BUFFER_ELEMENTS, GL_FLOAT,
                                             3, GL_DYNAMIC_DRAW};
+  pangolin::GlSizeableBuffer color_buffer_{
+      pangolin::GlArrayBuffer, INITIAL_BUFFER_ELEMENTS, GL_UNSIGNED_BYTE, 3,
+      GL_DYNAMIC_DRAW};
 };
 
 class BalFrameDisplay {
