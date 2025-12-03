@@ -107,6 +107,7 @@ class TWiseEnumRef : public TEnumRef<is_const> {
     } else {
       ROOTBA_UNUSED(str);
       LOG(FATAL) << "unreachable";
+      return false;
     }
   }
 
@@ -120,6 +121,7 @@ class TWiseEnumRef : public TEnumRef<is_const> {
       }
     } else {
       LOG(FATAL) << "unreachable";
+      return false;
     }
   }
 
