@@ -58,6 +58,7 @@ void BalImageOverlay::update(pangolin::ImageView& view,
   kpts_detected_.clear();
   kpts_projected_.clear();
   image_size_.setZero();
+  image_size_ = {1, 1};
 
   // compute projections and store observations
   for (const auto& lm : lmdb) {

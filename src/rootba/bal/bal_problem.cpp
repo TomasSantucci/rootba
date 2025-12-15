@@ -206,7 +206,6 @@ void BalProblem<Scalar>::load_bal(const std::string& path) {
     fscan_or_throw(fptr, "%d", &num_obs);
     CHECK_GT(num_cams, 0);
     CHECK_GT(num_lms, 0);
-    CHECK_GT(num_obs, 0);
 
     // clear memory and re-allocate
     if (cameras_.capacity() > unsigned_cast(num_cams)) {
