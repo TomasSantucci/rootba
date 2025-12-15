@@ -604,6 +604,48 @@ bool BalProblem<Scalar>::save_rootba(const std::string& path) {
 }
 
 template <typename Scalar>
+bool BalProblem<Scalar>::save_bal(const std::string& path) {
+  using Vec3 = Eigen::Matrix<Scalar, 3, 1>;
+  FILE* fptr = std::fopen(path.c_str(), "w");
+  if (fptr == nullptr) {
+    LOG(FATAL) << "Could not open file for writing: '" << path << "'";
+    return false;
+  }
+
+  int num_cams = static_cast<int>(cameras_.size());
+  int num_lms = static_cast<int>(landmarks_.size());
+  int num_obs = 0;
+  for (const auto& lm : landmarks_) num_obs += lm.obs.size();
+
+  fprintf(fptr, "%d %d %d\n", num_cams, num_lms, num_obs);
+
+  for (int lm_idx = 0; lm_idx < int(landmarks_.size()); ++lm_idx) {
+    const auto& lm = landmarks_[lm_idx];
+    for (const auto& [cam_idx, obs] : lm.obs) {
+      fprintf(fptr, "%d %d ", cam_idx, lm_idx);
+      fprintf(fptr, "%lf %lf\n", obs.pos.x(), -obs.pos.y());  // Invert Y
+    }
+  }
+
+  const SO3 axis_inversion = SO3(Vec3(1, -1, -1).asDiagonal());
+  for (const auto& cam : cameras_) {
+    SO3 R = axis_inversion * cam.T_c_w.so3();
+    Vec3 r = R.log();
+    Vec3 t = axis_inversion * cam.T_c_w.translation();
+    Vec3 intr = cam.intrinsics.getParam();
+    fprintf(fptr, "%lf %lf %lf ", r.x(), r.y(), r.z());
+    fprintf(fptr, "%lf %lf %lf ", t.x(), t.y(), t.z());
+    fprintf(fptr, "%lf %lf %lf\n", intr(0), intr(1), intr(2));
+  }
+
+  for (const auto& lm : landmarks_) {
+    fprintf(fptr, "%lf %lf %lf\n", lm.p_w.x(), lm.p_w.y(), lm.p_w.z());
+  }
+  std::fclose(fptr);
+  return true;
+}
+
+template <typename Scalar>
 void BalProblem<Scalar>::normalize(const double new_scale) {
   // TODO: try out normalization mentioned in MCBA paper to see if it has
   // additional benefit on numerics (note that we already have jacobian scaling)
@@ -738,6 +780,10 @@ void BalProblem<Scalar>::postprocress(const BalDatasetOptions& options,
 
   if (options.save_output) {
     save_rootba(options.output_optimized_path);
+  }
+
+  if (options.save_bal != "") {
+    save_bal(options.save_bal);
   }
 
   if (timing_summary) {

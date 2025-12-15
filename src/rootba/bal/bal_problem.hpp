@@ -169,6 +169,8 @@ class BalProblem {
 
   bool load_rootba(const std::string& path);
   bool save_rootba(const std::string& path);
+  bool save_bal(const std::string& path);
+
 
   void normalize(double new_scale);
 

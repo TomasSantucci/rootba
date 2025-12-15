@@ -116,6 +116,12 @@ int main(int argc, char** argv) {
   });
   pangolin::Var<int>::Attach("ui.max_num_iterations",
                              options.solver.max_num_iterations, 0, 100);
+  Button save_bal("ui.save_bal", [&]() {
+    std::string out = options.dataset.save_bal;
+    if (out.empty()) out = "output.bal.txt";
+    bal_problem.save_bal(out);
+  });
+
   pangolin::CreateWindowAndBind("BAL", 1800, 1000);
 
   glEnable(GL_DEPTH_TEST);

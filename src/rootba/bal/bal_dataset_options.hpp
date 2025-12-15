@@ -52,6 +52,8 @@ struct BalDatasetOptions : public VisitableOptions<BalDatasetOptions> {
 
   VISITABLE_META(bool, save_output,
                  init(false).help("save optimization result"));
+  VISITABLE_META(std::string, save_bal,
+                 init("").help("Export to BAL format file"));
   VISITABLE_META(
       std::string, output_optimized_path,
       init("optimized.cereal").help("output file for optimized problem"));
