@@ -45,8 +45,8 @@ namespace rootba {
 class BalImageOverlay {
  public:
   struct Options {
-    int min_image_size = 500;
-    int max_image_size = 2000;
+    int min_image_size = 320;
+    int max_image_size = 3200;
     double circle_radius = 3.0;
   };
 

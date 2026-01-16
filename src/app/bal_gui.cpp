@@ -80,10 +80,10 @@ int main(int argc, char** argv) {
   //       point_size = 1, cam_weight = 1, cam_size = 0.5
   pangolin::Var<int> point_size("ui.point_size", 2, 1, 5);
   pangolin::Var<int> cam_weight("ui.cam_weight", 2, 1, 5);
-  pangolin::Var<double> cam_size("ui.cam_size", 1.5, 0.5, 5);
+  pangolin::Var<double> cam_size("ui.cam_size", 20, 0.5, 50);
 
-  pangolin::Var<int> min_image_size("ui.min_image_size", 500, 100, 2000);
-  pangolin::Var<int> max_image_size("ui.max_image_size", 2000, 100, 2000);
+  pangolin::Var<int> min_image_size("ui.min_image_size", 320, 100, 3200);
+  pangolin::Var<int> max_image_size("ui.max_image_size", 3200, 100, 3200);
   pangolin::Var<double> circle_radius("ui.circle_radius", 3.0, 0.5, 20.0);
 
   Button optimize_ceres("ui.optimize", [&]() {
