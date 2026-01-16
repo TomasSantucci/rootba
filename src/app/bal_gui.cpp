@@ -202,7 +202,7 @@ int main(int argc, char** argv) {
     }
 
     display_3d.Activate(camera_3d_display);
-    glClearColor(1.0F, 1.0F, 1.0F, 1.0F);
+    glClearColor(0.93F, 0.94F, 0.95F, 1.0F);
     map_display.draw(show_frame, {point_size, cam_weight, cam_size});
     pangolin::glDrawAxis(Sophus::SE3d().matrix(), 10.0);
 
