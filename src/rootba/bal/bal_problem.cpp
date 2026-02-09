@@ -258,7 +258,9 @@ void BalProblem<Scalar>::load_bal(const std::string& path) {
       auto& cam = cameras_.at(i);
       cam.T_c_w.so3() = axis_inversion * SO3::exp(params.template head<3>());
       cam.T_c_w.translation() = axis_inversion * params.template segment<3>(3);
-      cam.intrinsics = CameraModel(params.template tail<3>());
+
+      cam.intrinsics = CameraModel::fromString("bal");
+      cam.intrinsics.setParams(params.template head<3>());
     }
 
     // parse landmark parameters
@@ -332,7 +334,8 @@ void BalProblem<Scalar>::load_bundler(const std::string& path) {
 
       // create camera object
       auto& cam = cameras_.emplace_back();
-      cam.intrinsics = CameraModel(params.template head<3>());
+      cam.intrinsics = CameraModel::fromString("bal");
+      cam.intrinsics.setParams(params.template head<3>());
       Eigen::Map<Eigen::Matrix<Scalar, 3, 3, Eigen::RowMajor>> R(params.data() +
                                                                  3);
       cam.T_c_w.so3() = axis_inversion * SO3(R);
@@ -437,11 +440,10 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
     3 SIMPLE_RADIAL 3072 2304 2559.69 1536 1152 -0.0218531
     */
     struct ColmapCamera {
-      Scalar f;
-      Scalar cx;
-      Scalar cy;
-      Scalar k1;
-      Scalar k2;
+      std::string model;
+      std::vector<Scalar> params;
+      Scalar cx = 0;
+      Scalar cy = 0;
     };
     unordered_map<ssize_t, ColmapCamera> colmap_cameras;
 
@@ -468,7 +470,30 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
         Scalar k1 = 0;
         bool read = bool(ss >> f >> cx >> cy >> k1);
         CHECK(read) << "cameras.txt: '{}'"_format(line);
-        colmap_cameras[camera_id] = ColmapCamera{f, cx, cy, k1, 0};
+        colmap_cameras[camera_id] = ColmapCamera{"bal", {f, k1, 0}, cx, cy};
+      } else if (model == "PINHOLE") {
+        Scalar fx = 0, fy = 0, cx = 0, cy = 0;
+        bool read = bool(ss >> fx >> fy >> cx >> cy);
+        CHECK(read) << "cameras.txt: '{}'"_format(line);
+        colmap_cameras[camera_id] =
+            ColmapCamera{"pinhole", {fx, fy, 0, 0}, cx, cy};
+      } else if (model == "SIMPLE_PINHOLE") {
+        Scalar f = 0, cx = 0, cy = 0;
+        bool read = bool(ss >> f >> cx >> cy);
+        CHECK(read) << "cameras.txt: '{}'"_format(line);
+        colmap_cameras[camera_id] =
+            ColmapCamera{"pinhole", {f, f, 0, 0}, cx, cy};
+      } else if (model == "FULL_OPENCV") {
+        Scalar fx = 0, fy = 0, cx = 0, cy = 0, k1 = 0, k2 = 0, p1 = 0, p2 = 0,
+               k3 = 0, k4 = 0, k5 = 0, k6 = 0;
+        bool read = bool(ss >> fx >> fy >> cx >> cy >> k1 >> k2 >> p1 >> p2 >>
+                         k3 >> k4 >> k5 >> k6);
+        CHECK(read) << "cameras.txt: '{}'"_format(line);
+        colmap_cameras[camera_id] =
+            ColmapCamera{"pinhole-radtan8",
+                         {fx, fy, 0, 0, k1, k2, p1, p2, k3, k4, k5, k6},
+                         cx,
+                         cy};
       } else {
         LOG(FATAL) << "Not implemented: COLMAP camera model '{}'"_format(model);
       }
@@ -517,7 +542,13 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
       ColmapCamera& colcam = colmap_cameras.at(camera_id);
       cam.T_c_w.so3() = SO3(Quaternion(qw, qx, qy, qz));
       cam.T_c_w.translation() = Vec3{tx, ty, tz};
-      cam.intrinsics = CameraModel({colcam.f, colcam.k1, colcam.k2});
+      cam.intrinsics = CameraModel::fromString(colcam.model);
+      Eigen::Matrix<Scalar, Eigen::Dynamic, 1> intr;
+      intr.resize(colcam.params.size());
+      for (size_t i = 0; i < colcam.params.size(); ++i) {
+        intr(static_cast<int>(i)) = colcam.params[i];
+      }
+      cam.intrinsics.setParams(intr);
 
       getline(f, line);
       ss = istringstream(line);
@@ -792,22 +823,32 @@ void BalProblem<Scalar>::postprocress(const BalDatasetOptions& options,
 
 template <typename Scalar>
 void BalProblem<Scalar>::copy_to_camera_state(VecX& camera_state) const {
-  CHECK_EQ(camera_state.size(), num_cameras() * CAM_STATE_SIZE);
-  for (int i = 0; i < num_cameras(); ++i) {
-    auto& cam = cameras_[i];
-    camera_state.template segment<CAM_STATE_SIZE>(i * CAM_STATE_SIZE) =
-        cam.params();
+  // Compute total size dynamically (pose 7 + intrinsics per cam).
+  int total_size = 0;
+  for (const auto& cam : cameras_) {
+    total_size += 7 + cam.intrinsics.getN();
+  }
+  camera_state.resize(total_size);
+
+  int offset = 0;
+  for (const auto& cam : cameras_) {
+    const int block_size = 7 + cam.intrinsics.getN();
+    camera_state.segment(offset, block_size) = cam.params();
+    offset += block_size;
   }
 }
 
 template <typename Scalar>
 void BalProblem<Scalar>::copy_from_camera_state(const VecX& camera_state) {
-  CHECK_EQ(camera_state.size(), num_cameras() * CAM_STATE_SIZE);
-  for (int i = 0; i < num_cameras(); ++i) {
-    auto& cam = cameras_[i];
-    cam.from_params(
-        camera_state.template segment<CAM_STATE_SIZE>(i * CAM_STATE_SIZE));
+  int offset = 0;
+  for (auto& cam : cameras_) {
+    const int block_size = 7 + cam.intrinsics.getN();
+    CHECK_GE(camera_state.size(), offset + block_size);
+    cam.from_params(camera_state.segment(offset, block_size));
+    offset += block_size;
   }
+  CHECK_EQ(offset, camera_state.size())
+      << "Camera state vector size does not match accumulated block sizes.";
 }
 
 template <typename Scalar>

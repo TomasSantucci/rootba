@@ -38,7 +38,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cstdint>
 #include <map>
 
-#include <basalt/camera/bal_camera.hpp>
+#include <basalt/camera/generic_camera.hpp>
 #include <glog/logging.h>
 
 #include "rootba/bal/common_types.hpp"
@@ -70,9 +70,12 @@ class BalProblem {
   using SE3 = Sophus::SE3<Scalar>;
   using SO3 = Sophus::SO3<Scalar>;
 
+  // Only used when the map is loaded using load_bal or load_bundler, which are
+  // hardcoded for bal cameras.
   static constexpr int CAM_STATE_SIZE = 10;
 
-  using CameraModel = basalt::BalCamera<Scalar>;
+  // Generic camera wrapper to support multiple intrinsic models.
+  using CameraModel = basalt::GenericCamera<Scalar>;
 
   struct Observation {
     Vec2 pos = Vec2::Zero();
@@ -83,16 +86,22 @@ class BalProblem {
     CameraModel intrinsics;  // per-camera intrinsics
 
     VecX params() const {
-      VecX p(CAM_STATE_SIZE);
+      const int intrinsics_size = intrinsics.getN();
+      VecX p(7 + intrinsics_size);
       p.template head<7>() = T_c_w.params();
-      p.template tail<3>() = intrinsics.getParam();
+      p.tail(intrinsics_size) = intrinsics.getParam();
       return p;
     }
 
     void from_params(const VecX& p) {
-      CHECK_EQ(p.size(), CAM_STATE_SIZE);
+      CHECK_GE(p.size(), 7);
+      const int intrinsics_size = p.size() - 7;
       T_c_w = Eigen::Map<const SE3>(p.data());
-      intrinsics = CameraModel(p.template tail<3>());
+
+      // Ensure the stored model matches the provided parameter size.
+      CHECK_EQ(intrinsics.getN(), intrinsics_size)
+          << "Camera intrinsics size mismatch; model needs reinitialization";
+      intrinsics.setParams(p.tail(intrinsics_size));
     }
 
     void apply_inc_pose(const Vec6& inc) { inc_pose(inc, T_c_w); }
@@ -101,12 +110,9 @@ class BalProblem {
       T_c_w = Sophus::se3_expd(inc) * T_c_w;
     }
 
-    void apply_inc_intrinsics(const Vec3& inc) {
-      inc_intrinsics(inc, intrinsics);
-    }
-
-    inline static void inc_intrinsics(const Vec3& inc, CameraModel& intr) {
-      intr += inc;
+    template <class Derived>
+    void apply_inc_intrinsics(const Eigen::MatrixBase<Derived>& inc) {
+      intrinsics.applyInc(inc);
     }
 
     void backup() {
@@ -170,7 +176,6 @@ class BalProblem {
   bool load_rootba(const std::string& path);
   bool save_rootba(const std::string& path);
   bool save_bal(const std::string& path);
-
 
   void normalize(double new_scale);
 

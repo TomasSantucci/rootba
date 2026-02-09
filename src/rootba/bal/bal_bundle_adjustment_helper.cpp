@@ -35,6 +35,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 #include "rootba/bal/bal_bundle_adjustment_helper.hpp"
 
+#include <variant>
+
 #include <tbb/blocked_range.h>
 #include <tbb/parallel_reduce.h>
 
@@ -111,7 +113,7 @@ void BalBundleAdjustmentHelper<Scalar>::compute_error(
 template <typename Scalar>
 bool BalBundleAdjustmentHelper<Scalar>::linearize_point(
     const Vec2& obs, const Vec3& lm_p_w, const SE3& T_c_w,
-    const basalt::BalCamera<Scalar>& intr, const bool ignore_validity_check,
+    const basalt::GenericCamera<Scalar>& intr, const bool ignore_validity_check,
     VecR& res, MatRP* d_res_d_xi, MatRI* d_res_d_i, MatRL* d_res_d_l) {
   Mat4 T_c_w_mat = T_c_w.matrix();
 
@@ -119,10 +121,13 @@ bool BalBundleAdjustmentHelper<Scalar>::linearize_point(
 
   Mat24 d_res_d_p;
   bool projection_valid;
+  const auto* bal_intr = std::get_if<basalt::BalCamera<Scalar>>(&intr.variant);
+  CHECK(bal_intr != nullptr)
+      << "Manual linearization supports only bal intrinsics";
   if (d_res_d_xi || d_res_d_i || d_res_d_l) {
-    projection_valid = intr.project(p_c_3d, res, &d_res_d_p, d_res_d_i);
+    projection_valid = bal_intr->project(p_c_3d, res, &d_res_d_p, d_res_d_i);
   } else {
-    projection_valid = intr.project(p_c_3d, res, nullptr, nullptr);
+    projection_valid = bal_intr->project(p_c_3d, res, nullptr, nullptr);
   }
   res -= obs;
 

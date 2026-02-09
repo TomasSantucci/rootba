@@ -35,56 +35,73 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 #pragma once
 
-#include <basalt/camera/bal_camera.hpp>
-#include <ceres/autodiff_cost_function.h>
+#include <basalt/camera/generic_camera.hpp>
+#include <ceres/dynamic_autodiff_cost_function.h>
 
 #include "rootba/ceres/types.hpp"
 #include "rootba/util/eigen_types.hpp"
 
 namespace rootba {
 
-// ceres residual
+// Generic-camera Ceres residual with dynamic intrinsics size.
 template <int Options = 0>
-class BalSnavelyReprojectionError {
+class BalGenericReprojectionError {
  public:
-  explicit BalSnavelyReprojectionError(const Vec2d& obs) : obs_(obs) {}
+  BalGenericReprojectionError(const Vec2d& obs,
+                              const basalt::GenericCamera<double>& cam_model,
+                              int intrinsics_size)
+      : obs_(obs), cam_model_(cam_model), intrinsics_size_(intrinsics_size) {}
+
+  // DynamicAutoDiffCostFunction expects this signature.
+  template <class T>
+  bool operator()(const T* const* parameters, T* residual) const {
+    return (*this)(parameters[0], parameters[1], residual);
+  }
 
   template <class T>
   bool operator()(const T* camera, const T* landmark, T* residual) const {
     Eigen::Map<const Sophus::SE3<T>> T_c_w(camera);
-    Eigen::Map<const Eigen::Matrix<T, 3, 1>> intrinsics(camera + 7);
     Eigen::Map<const Eigen::Matrix<T, 3, 1>> p_w(landmark);
     Eigen::Map<Eigen::Matrix<T, 2, 1>> res_vec(residual);
 
-    const basalt::BalCamera<T> cam(intrinsics);
+    Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, 1>> intrinsics(
+        camera + 7, intrinsics_size_);
+
+    auto cam = cam_model_.template cast<T>();
+    cam.setParams(intrinsics);  // set intrinsics from the parameter block
 
     auto p_cam = T_c_w * p_w;
     if constexpr (Options & VALID_PROJECTIONS_ONLY) {
       if (p_cam.z() < Sophus::Constants<T>::epsilonSqrt()) {
-        // invalid projection
         res_vec.setZero();
-      } else {
-        Eigen::Matrix<T, 2, 1> p_proj;
-        cam.project(p_cam.homogeneous(), p_proj);
-        res_vec = p_proj - obs_;
+        return true;
       }
-    } else {
-      Eigen::Matrix<T, 2, 1> p_proj;
-      cam.project(p_cam.homogeneous(), p_proj);
-      res_vec = p_proj - obs_;
     }
 
+    Eigen::Matrix<T, 4, 1> p_cam_h = p_cam.homogeneous();
+    Eigen::Matrix<T, 2, 1> p_proj;
+    cam.project(p_cam_h, p_proj);
+    res_vec = p_proj - obs_.cast<T>();
     return true;
-  }
-
-  static ceres::CostFunction* create(const Vec2d& obs) {
-    return (
-        new ceres::AutoDiffCostFunction<BalSnavelyReprojectionError, 2, 10, 3>(
-            new BalSnavelyReprojectionError(obs)));
   }
 
  private:
   Vec2d obs_;
+  basalt::GenericCamera<double> cam_model_;
+  int intrinsics_size_;
 };
+
+template <int Options = 0>
+inline ceres::CostFunction* create_bal_reprojection_cost(
+    const Vec2d& obs, const basalt::GenericCamera<double>& cam_model,
+    int intrinsics_size) {
+  using Functor = BalGenericReprojectionError<Options>;
+  auto* functor = new Functor(obs, cam_model, intrinsics_size);
+  auto* cost = new ceres::DynamicAutoDiffCostFunction<Functor>(functor);
+  cost->AddParameterBlock(7 + intrinsics_size);
+  cost->AddParameterBlock(3);
+  cost->SetNumResiduals(2);
+  return cost;
+}
 
 }  // namespace rootba

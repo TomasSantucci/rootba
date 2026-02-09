@@ -552,6 +552,15 @@ void bundle_adjust_manual(BalProblem<Scalar>& bal_problem,
                           const SolverOptions& solver_options,
                           SolverSummary* output_solver_summary,
                           PipelineTimingSummary* output_timing_summary) {
+  // Guard: manual solver currently supports only 3 intrinsic parameters
+  // (legacy BalCamera). If a different model is used, ask the user to run
+  // the Ceres-based solver instead.
+  if (!bal_problem.cameras().empty() &&
+      bal_problem.cameras().front().intrinsics.getN() != 3) {
+    LOG(FATAL) << "Manual solver supports only 3-parameter intrinsics. "
+               << "Please use the Ceres solver for other camera models.";
+  }
+
   OwnOrReference<SolverSummary> solver_summary(output_solver_summary);
   optimize_lm_ours(bal_problem, solver_options, *solver_summary);
 

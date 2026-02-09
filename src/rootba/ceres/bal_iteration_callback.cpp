@@ -43,13 +43,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace rootba {
 
-BalIterationCallback::BalIterationCallback(BaLog& log,
-                                           BalProblem<double>& bal_problem,
-                                           const VecXd& camera_state,
-                                           const SolverOptions& options)
+BalIterationCallback::BalIterationCallback(
+    BaLog& log, BalProblem<double>& bal_problem,
+    const std::vector<VecXd>& camera_blocks, const SolverOptions& options)
     : log_(log),
       bal_problem_(bal_problem),
-      camera_state_(camera_state),
+      camera_blocks_(camera_blocks),
       options_(options) {}
 
 ceres::CallbackReturnType BalIterationCallback::operator()(
@@ -75,7 +74,9 @@ ceres::CallbackReturnType BalIterationCallback::operator()(
 
   // compute (valid) error if step was successful and state changed
   if (it.step_is_successful) {
-    bal_problem_.copy_from_camera_state(camera_state_);
+    for (size_t i = 0; i < bal_problem_.cameras().size(); ++i) {
+      bal_problem_.cameras()[i].from_params(camera_blocks_[i]);
+    }
 
     ResidualInfo ri;
     BalBundleAdjustmentHelper<double>::compute_error(bal_problem_, options_,

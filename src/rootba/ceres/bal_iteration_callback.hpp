@@ -35,6 +35,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 #pragma once
 
+#include <vector>
+
 #include <ceres/iteration_callback.h>
 
 #include "rootba/bal/ba_log.hpp"
@@ -47,7 +49,7 @@ namespace rootba {
 class BalIterationCallback : public ceres::IterationCallback {
  public:
   explicit BalIterationCallback(BaLog& log, BalProblem<double>& bal_problem,
-                                const VecXd& camera_state,
+                                const std::vector<VecXd>& camera_blocks,
                                 const SolverOptions& options);
 
   ceres::CallbackReturnType operator()(
@@ -57,7 +59,7 @@ class BalIterationCallback : public ceres::IterationCallback {
   BaLog& log_;
 
   BalProblem<double>& bal_problem_;
-  const VecXd& camera_state_;
+  const std::vector<VecXd>& camera_blocks_;
 
   const SolverOptions& options_;
 };

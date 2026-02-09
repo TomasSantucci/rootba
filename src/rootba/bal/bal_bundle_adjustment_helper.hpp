@@ -78,11 +78,26 @@ class BalBundleAdjustmentHelper {
   // linearize one observation
   static bool linearize_point(const Vec2& obs, const Vec3& lm_p_w,
                               const SE3& cam_T_c_w,
-                              const basalt::BalCamera<Scalar>& intr,
+                              const basalt::GenericCamera<Scalar>& intr,
                               bool ignore_validity_check, VecR& res,
                               MatRP* d_res_d_xi = nullptr,
                               MatRI* d_res_d_i = nullptr,
                               MatRL* d_res_d_l = nullptr);
+
+  // Convenience overload for BAL tests that still pass BalCamera directly.
+  static bool linearize_point(const Vec2& obs, const Vec3& lm_p_w,
+                              const SE3& cam_T_c_w,
+                              const basalt::BalCamera<Scalar>& intr,
+                              bool ignore_validity_check, VecR& res,
+                              MatRP* d_res_d_xi = nullptr,
+                              MatRI* d_res_d_i = nullptr,
+                              MatRL* d_res_d_l = nullptr) {
+    basalt::GenericCamera<Scalar> intr_generic;
+    intr_generic.variant = intr;
+    return linearize_point(obs, lm_p_w, cam_T_c_w, intr_generic,
+                           ignore_validity_check, res, d_res_d_xi, d_res_d_i,
+                           d_res_d_l);
+  }
 };
 
 }  // namespace rootba
