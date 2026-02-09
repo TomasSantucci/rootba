@@ -23,7 +23,7 @@
 	url = https://github.com/fmtlib/fmt.git
 [submodule "external/basalt-headers"]
 	path = external/basalt-headers
-	url = https://gitlab.com/VladyslavUsenko/basalt-headers.git
+	url = https://github.com/TomasSantucci/basalt-headers.git
 [submodule "external/abseil-cpp"]
 	path = external/abseil-cpp
 	url = https://github.com/abseil/abseil-cpp.git
