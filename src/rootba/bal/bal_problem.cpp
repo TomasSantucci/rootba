@@ -476,13 +476,13 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
         bool read = bool(ss >> fx >> fy >> cx >> cy);
         CHECK(read) << "cameras.txt: '{}'"_format(line);
         colmap_cameras[camera_id] =
-            ColmapCamera{"pinhole", {fx, fy, 0, 0}, cx, cy};
+            ColmapCamera{"pinhole", {fx, fy, cx, cy}, cx, cy};
       } else if (model == "SIMPLE_PINHOLE") {
         Scalar f = 0, cx = 0, cy = 0;
         bool read = bool(ss >> f >> cx >> cy);
         CHECK(read) << "cameras.txt: '{}'"_format(line);
         colmap_cameras[camera_id] =
-            ColmapCamera{"pinhole", {f, f, 0, 0}, cx, cy};
+            ColmapCamera{"pinhole", {f, f, cx, cy}, cx, cy};
       } else if (model == "FULL_OPENCV") {
         Scalar fx = 0, fy = 0, cx = 0, cy = 0, k1 = 0, k2 = 0, p1 = 0, p2 = 0,
                k3 = 0, k4 = 0, k5 = 0, k6 = 0;
@@ -491,7 +491,7 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
         CHECK(read) << "cameras.txt: '{}'"_format(line);
         colmap_cameras[camera_id] =
             ColmapCamera{"pinhole-radtan8",
-                         {fx, fy, 0, 0, k1, k2, p1, p2, k3, k4, k5, k6},
+                         {fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6},
                          cx,
                          cy};
       } else if (model == "OPENCV_FISHEYE") {
@@ -499,7 +499,7 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
         bool read = bool(ss >> fx >> fy >> cx >> cy >> k1 >> k2 >> k3 >> k4);
         CHECK(read) << "cameras.txt: '{}'"_format(line);
         colmap_cameras[camera_id] =
-            ColmapCamera{"kb4", {fx, fy, 0, 0, k1, k2, k3, k4}, cx, cy};
+            ColmapCamera{"kb4", {fx, fy, cx, cy, k1, k2, k3, k4}, cx, cy};
       } else {
         LOG(FATAL) << "Not implemented: COLMAP camera model '{}'"_format(model);
       }
@@ -574,7 +574,10 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
         }
 
         // Note: colmap can have >1 obs of same point in one image, use last one
-        landmarks_.at(lmidx).obs[image_id] = {{x - colcam.cx, y - colcam.cy}};
+        if (colcam.model == "bal")
+          landmarks_.at(lmidx).obs[image_id] = {{x - colcam.cx, y - colcam.cy}};
+        else
+          landmarks_.at(lmidx).obs[image_id] = {{x, y}};
       }
     }
 

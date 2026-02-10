@@ -67,16 +67,28 @@ void BalImageOverlay::update(pangolin::ImageView& view,
       continue;
     }
 
-    kpts_detected_.emplace_back(obs_it->second.pos.template cast<double>());
+    Vec2 obs_pos = obs_it->second.pos;
+
+    if (target_cam.intrinsics.getName() != "bal") {
+      obs_pos[0] -= target_cam.intrinsics.getParam()[2];
+      obs_pos[1] -= target_cam.intrinsics.getParam()[3];
+    }
+
+    kpts_detected_.emplace_back(obs_pos.template cast<double>());
 
     // projected position
     Vec4 p_cam = (target_cam.T_c_w * lm.p_w).homogeneous();
     Vec2 p_proj;
     target_cam.intrinsics.project(p_cam, p_proj);
+
+    if (target_cam.intrinsics.getName() != "bal") {
+      p_proj[0] -= target_cam.intrinsics.getParam()[2];
+      p_proj[1] -= target_cam.intrinsics.getParam()[3];
+    }
     kpts_projected_.emplace_back(p_proj.template cast<double>());
 
-    image_size_ = image_size_.cwiseMax(
-        obs_it->second.pos.template cast<double>().cwiseAbs() * 2);
+    image_size_ =
+        image_size_.cwiseMax(obs_pos.template cast<double>().cwiseAbs() * 2);
   }
 
   if (image_size_.minCoeff() < options_.min_image_size) {
