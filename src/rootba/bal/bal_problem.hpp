@@ -38,6 +38,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <cstdint>
 #include <map>
 
+#include <basalt/calibration/calibration.hpp>
 #include <basalt/camera/generic_camera.hpp>
 #include <glog/logging.h>
 
@@ -176,6 +177,8 @@ class BalProblem {
   bool load_rootba(const std::string& path);
   bool save_rootba(const std::string& path);
   bool save_bal(const std::string& path);
+  bool save_euroc(const std::string& path,
+                  const basalt::Calibration<double>& calib);
 
   void normalize(double new_scale);
 
@@ -238,6 +241,9 @@ class BalProblem {
 
   Cameras cameras_;
   Landmarks landmarks_;
+
+  std::unordered_map<size_t, size_t> sequential_colmap_id_to_basalt_id;
+  std::unordered_map<size_t, size_t> image_id_to_cam_id;
 
   /// quiet means no INFO level log output
   bool quiet_ = false;

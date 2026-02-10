@@ -610,6 +610,24 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
       lm.color = {uint8_t(r), uint8_t(g), uint8_t(b)};
     }
 
+    // Read image_id_to_frame_id.txt which maps each colmap image ID to a basalt
+    // TimeCamId
+    path image_id_to_frame_id_txt = dir / "image_id_to_frame_id.txt";
+    if (std::filesystem::exists(image_id_to_frame_id_txt)) {
+      f = ifstream{image_id_to_frame_id_txt};
+      while (getline(f, line)) {
+        if (line.empty() || line[0] == '#') continue;
+
+        istringstream ss(line);
+        ssize_t image_id = 0;
+        ssize_t frame_id = 0;
+        ssize_t cam_id = 0;
+        bool read = bool(ss >> image_id >> frame_id >> cam_id);
+        CHECK(read) << "image_id_to_frame_id.txt: '{}'"_format(line);
+        sequential_colmap_id_to_basalt_id[image_id] = frame_id;
+        image_id_to_cam_id[image_id] = cam_id;
+      }
+    }
   } catch (const std::exception& e) {
     LOG(ERROR)
         << "Exception caught while loading COLMAP dataset '{}'\n'{}'"_format(
@@ -676,6 +694,43 @@ bool BalProblem<Scalar>::save_bal(const std::string& path) {
 
   for (const auto& lm : landmarks_) {
     fprintf(fptr, "%lf %lf %lf\n", lm.p_w.x(), lm.p_w.y(), lm.p_w.z());
+  }
+  std::fclose(fptr);
+  return true;
+}
+
+template <typename Scalar>
+bool BalProblem<Scalar>::save_euroc(const std::string& path,
+                                    const basalt::Calibration<double>& calib) {
+  FILE* fptr = std::fopen(path.c_str(), "w");
+  if (fptr == nullptr) {
+    LOG(FATAL) << "Could not open file for writing: '" << path << "'";
+    return false;
+  }
+  fprintf(fptr,
+          "#timestamp [ns],p_RS_R_x [m],p_RS_R_y [m],p_RS_R_z [m],"
+          "q_RS_w [],q_RS_x [],q_RS_y [],q_RS_z []\n");
+  const SE3 T_c_i = calib.T_i_c[0].inverse().cast<Scalar>();
+  for (size_t cam_idx = 0; cam_idx < cameras_.size(); ++cam_idx) {
+    if (image_id_to_cam_id[cam_idx + 1] != 1) {
+      // We save only one pose per keyframe, taking the first camera as
+      // reference
+      continue;
+    }
+
+    const auto& cam = cameras_[cam_idx];
+    const SE3 T_w_c = cam.T_c_w.inverse();
+    const SE3 T_w_i = T_w_c * T_c_i;
+    const Vec3 t = T_w_i.translation();
+    const SO3 R = T_w_i.so3();
+    const Eigen::Quaternion<Scalar> q = R.unit_quaternion();
+    const size_t frame_id =
+        sequential_colmap_id_to_basalt_id.count(cam_idx + 1)
+            ? sequential_colmap_id_to_basalt_id.at(cam_idx + 1)
+            : cam_idx;
+
+    fprintf(fptr, "%lu,%lf,%lf,%lf,%lf,%lf,%lf,%lf\n", frame_id, t.x(), t.y(),
+            t.z(), q.w(), q.x(), q.y(), q.z());
   }
   std::fclose(fptr);
   return true;

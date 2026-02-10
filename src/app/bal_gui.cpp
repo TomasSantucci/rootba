@@ -34,6 +34,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 */
 
+#include <cstring>
+#include <filesystem>
+
+#include <basalt/calibration/calibration.hpp>
+#include <basalt/serialization/headers_serialization.h>
 #include <glog/logging.h>
 #include <pangolin/display/image_view.h>
 #include <pangolin/pangolin.h>
@@ -75,6 +80,22 @@ int main(int argc, char** argv) {
   bool bal_state_changed = true;
   pangolin::Var<int> show_frame("ui.show_frame", 0, 0, 1500);
   pangolin::Var<bool> show_image("ui.show_image", true, true);
+
+  basalt::Calibration<double> calib;
+  if (!options.dataset.calibration_file.empty()) {
+    std::ifstream calib_file(options.dataset.calibration_file);
+    if (!calib_file.is_open()) {
+      LOG(ERROR) << "Could not open calibration file: "
+                 << options.dataset.calibration_file
+                 << " (cwd: " << std::filesystem::current_path()
+                 << ", errno: " << std::strerror(errno) << ")";
+    } else {
+      cereal::JSONInputArchive archive(calib_file);
+      archive(calib);
+      LOG(INFO) << "Loaded calibration from file: "
+                << options.dataset.calibration_file;
+    }
+  }
 
   // Note: values used for visualizations in paper:
   //       point_size = 1, cam_weight = 1, cam_size = 0.5
@@ -120,6 +141,11 @@ int main(int argc, char** argv) {
     std::string out = options.dataset.save_bal;
     if (out.empty()) out = "output.bal.txt";
     bal_problem.save_bal(out);
+  });
+  Button save_euroc("ui.save_euroc", [&]() {
+    std::string out = options.dataset.save_bal;
+    if (out.empty()) out = "output_euroc.txt";
+    bal_problem.save_euroc(out, calib);
   });
 
   pangolin::CreateWindowAndBind("BAL", 1800, 1000);

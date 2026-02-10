@@ -50,6 +50,9 @@ struct BalDatasetOptions : public VisitableOptions<BalDatasetOptions> {
   VISITABLE_META(DatasetType, input_type,
                  init(DatasetType::AUTO).help("type of dataset to load"));
 
+  VISITABLE_META(std::string, calibration_file,
+                 init("").help("calibration file to use"));
+
   VISITABLE_META(bool, save_output,
                  init(false).help("save optimization result"));
   VISITABLE_META(std::string, save_bal,
