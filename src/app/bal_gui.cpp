@@ -147,6 +147,11 @@ int main(int argc, char** argv) {
     if (out.empty()) out = "output_euroc.txt";
     bal_problem.save_euroc(out, calib);
   });
+  pangolin::Var<double> obs_noise_sigma("ui.obs_noise_sigma", 0, 0, 2);
+  Button add_noise("ui.add_noise", [&]() {
+    bal_problem.add_noise(obs_noise_sigma);
+    bal_state_changed = true;
+  });
 
   pangolin::CreateWindowAndBind("BAL", 1800, 1000);
 

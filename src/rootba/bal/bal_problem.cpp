@@ -737,6 +737,27 @@ bool BalProblem<Scalar>::save_euroc(const std::string& path,
 }
 
 template <typename Scalar>
+void BalProblem<Scalar>::add_noise(const double obs_noise_sigma) {
+  CHECK_GE(obs_noise_sigma, 0.0);
+
+  if (obs_noise_sigma > 0) {
+    if (!quiet_) {
+      LOG(INFO) << "Adding noise to observations (sigma: {})"_format(
+          obs_noise_sigma);
+    }
+  } else {
+    return;
+  }
+
+  std::random_device r;
+  std::default_random_engine eng{r()};
+
+  for (auto& lm : landmarks_) {
+    lm.p_w += perturbation<Scalar, 3>(obs_noise_sigma, eng);
+  }
+}
+
+template <typename Scalar>
 void BalProblem<Scalar>::normalize(const double new_scale) {
   // TODO: try out normalization mentioned in MCBA paper to see if it has
   // additional benefit on numerics (note that we already have jacobian scaling)
