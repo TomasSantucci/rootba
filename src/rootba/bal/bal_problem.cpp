@@ -494,6 +494,12 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
                          {fx, fy, 0, 0, k1, k2, p1, p2, k3, k4, k5, k6},
                          cx,
                          cy};
+      } else if (model == "OPENCV_FISHEYE") {
+        Scalar fx = 0, fy = 0, cx = 0, cy = 0, k1 = 0, k2 = 0, k3 = 0, k4 = 0;
+        bool read = bool(ss >> fx >> fy >> cx >> cy >> k1 >> k2 >> k3 >> k4);
+        CHECK(read) << "cameras.txt: '{}'"_format(line);
+        colmap_cameras[camera_id] =
+            ColmapCamera{"kb4", {fx, fy, 0, 0, k1, k2, k3, k4}, cx, cy};
       } else {
         LOG(FATAL) << "Not implemented: COLMAP camera model '{}'"_format(model);
       }
