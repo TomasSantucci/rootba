@@ -44,8 +44,6 @@ namespace rootba {
 template <typename Scalar>
 class BalBundleAdjustmentHelper {
  public:
-  using IntrinsicsT = basalt::BalCamera<Scalar>;
-
   static constexpr size_t POSE_SIZE = 6;
   static constexpr size_t INTRINSICS_SIZE = 3;
   static constexpr size_t CAMERA_SIZE = POSE_SIZE + INTRINSICS_SIZE;

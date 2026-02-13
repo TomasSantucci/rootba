@@ -121,13 +121,10 @@ bool BalBundleAdjustmentHelper<Scalar>::linearize_point(
 
   Mat24 d_res_d_p;
   bool projection_valid;
-  const auto* bal_intr = std::get_if<basalt::BalCamera<Scalar>>(&intr.variant);
-  CHECK(bal_intr != nullptr)
-      << "Manual linearization supports only bal intrinsics";
   if (d_res_d_xi || d_res_d_i || d_res_d_l) {
-    projection_valid = bal_intr->project(p_c_3d, res, &d_res_d_p, d_res_d_i);
+    projection_valid = intr.project(p_c_3d, res, &d_res_d_p, nullptr);
   } else {
-    projection_valid = bal_intr->project(p_c_3d, res, nullptr, nullptr);
+    projection_valid = intr.project(p_c_3d, res, nullptr, nullptr);
   }
   res -= obs;
 
