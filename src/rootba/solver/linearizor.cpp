@@ -44,14 +44,48 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace rootba {
 
+namespace {
+
+template <typename Scalar>
+int detect_intrinsics_size(const BalProblem<Scalar>& bal_problem) {
+  CHECK(!bal_problem.cameras().empty())
+      << "BAL problem must contain at least one camera";
+
+  const int intrinsics_size = bal_problem.cameras().front().intrinsics.getN();
+  for (const auto& cam : bal_problem.cameras()) {
+    CHECK_EQ(cam.intrinsics.getN(), intrinsics_size)
+        << "All cameras must share the same intrinsics size";
+  }
+
+  return intrinsics_size;
+}
+
+}  // namespace
+
 template <typename Scalar_>
 std::unique_ptr<Linearizor<Scalar_>> Linearizor<Scalar_>::create(
     BalProblem<Scalar>& bal_problem, const SolverOptions& options,
     SolverSummary* summary) {
   switch (options.solver_type) {
     case SolverOptions::SolverType::SQUARE_ROOT:
-      return std::make_unique<LinearizorQR<Scalar>>(bal_problem, options,
-                                                    summary);
+      switch (detect_intrinsics_size(bal_problem)) {
+        case 3:
+          return std::make_unique<LinearizorQR<Scalar, 9>>(bal_problem, options,
+                                                           summary);
+        case 4:
+          return std::make_unique<LinearizorQR<Scalar, 10>>(bal_problem,
+                                                            options, summary);
+        case 8:
+          return std::make_unique<LinearizorQR<Scalar, 14>>(bal_problem,
+                                                            options, summary);
+        case 12:
+          return std::make_unique<LinearizorQR<Scalar, 18>>(bal_problem,
+                                                            options, summary);
+        default:
+          LOG(FATAL) << "Unsupported intrinsics size for QR solver: "
+                     << detect_intrinsics_size(bal_problem);
+      }
+      break;
     case SolverOptions::SolverType::SCHUR_COMPLEMENT:
       return std::make_unique<LinearizorSC<Scalar>>(bal_problem, options,
                                                     summary);

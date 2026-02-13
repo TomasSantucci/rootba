@@ -42,6 +42,10 @@ namespace rootba {
 template <class T, typename Scalar, int POSE_SIZE>
 class LandmarkBlockBase : public LandmarkBlock<Scalar> {
  public:
+  static constexpr int kPoseDim = 6;
+  static constexpr int kIntrinsicsDim = POSE_SIZE - kPoseDim;
+  static_assert(kIntrinsicsDim > 0, "Pose size must include intrinsics");
+
   using Options = typename LandmarkBlock<Scalar>::Options;
   using State = typename LandmarkBlock<Scalar>::State;
 

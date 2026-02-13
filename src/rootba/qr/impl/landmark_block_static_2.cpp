@@ -42,10 +42,16 @@ namespace rootba {
 
 #ifdef ROOTBA_INSTANTIATIONS_FLOAT
 template class LandmarkBlockStatic<float, 9, 2>;
+template class LandmarkBlockStatic<float, 10, 2>;
+template class LandmarkBlockStatic<float, 14, 2>;
+template class LandmarkBlockStatic<float, 18, 2>;
 #endif
 
 #ifdef ROOTBA_INSTANTIATIONS_DOUBLE
 template class LandmarkBlockStatic<double, 9, 2>;
+template class LandmarkBlockStatic<double, 10, 2>;
+template class LandmarkBlockStatic<double, 14, 2>;
+template class LandmarkBlockStatic<double, 18, 2>;
 #endif
 
 }  // namespace rootba

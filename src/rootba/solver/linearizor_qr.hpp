@@ -43,12 +43,14 @@ namespace rootba {
 template <typename Scalar, int POSE_SIZE>
 class LinearizationQR;
 
-template <class Scalar_>
+template <class Scalar_, int POSE_SIZE>
 class LinearizorQR : public LinearizorBase<Scalar_> {
  public:
   using Scalar = Scalar_;
   using Base = LinearizorBase<Scalar>;
-  constexpr static int POSE_SIZE = 9;
+  constexpr static int kPoseDim = 6;
+  constexpr static int kIntrinsicsDim = POSE_SIZE - kPoseDim;
+  static_assert(kIntrinsicsDim > 0, "Pose size must include intrinsics");
 
   using VecX = Eigen::Matrix<Scalar, Eigen::Dynamic, 1>;
 

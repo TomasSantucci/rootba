@@ -49,13 +49,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace rootba {
 
-template <class Scalar_>
-LinearizorQR<Scalar_>::LinearizorQR(BalProblem<Scalar>& bal_problem,
-                                    const SolverOptions& options,
-                                    SolverSummary* summary)
+template <class Scalar_, int POSE_SIZE>
+LinearizorQR<Scalar_, POSE_SIZE>::LinearizorQR(BalProblem<Scalar>& bal_problem,
+                                               const SolverOptions& options,
+                                               SolverSummary* summary)
     : LinearizorBase<Scalar>(bal_problem, options, summary) {
   // set options
-  typename LinearizationQR<Scalar, 9>::Options lqr_options;
+  typename LinearizationQR<Scalar, POSE_SIZE>::Options lqr_options;
 
   lqr_options.lb_options.use_householder =
       options_.use_householder_marginalization;
@@ -68,14 +68,15 @@ LinearizorQR<Scalar_>::LinearizorQR(BalProblem<Scalar>& bal_problem,
   lqr_options.lb_options.residual_options = options_.residual;
 
   // create linearization object
-  lqr_ = std::make_unique<LinearizationQR<Scalar, 9>>(bal_problem, lqr_options);
+  lqr_ = std::make_unique<LinearizationQR<Scalar, POSE_SIZE>>(bal_problem,
+                                                              lqr_options);
 }
 
-template <class Scalar_>
-LinearizorQR<Scalar_>::~LinearizorQR() = default;
+template <class Scalar_, int POSE_SIZE>
+LinearizorQR<Scalar_, POSE_SIZE>::~LinearizorQR() = default;
 
-template <class Scalar_>
-void LinearizorQR<Scalar_>::linearize() {
+template <class Scalar_, int POSE_SIZE>
+void LinearizorQR<Scalar_, POSE_SIZE>::linearize() {
   // ////////////////////////////////////////////////////////////////////////
   // Stage 1: outside LM solver inner-loop
   // - linearization
@@ -137,9 +138,9 @@ void LinearizorQR<Scalar_>::linearize() {
   new_linearization_point_ = true;
 }
 
-template <class Scalar_>
-typename LinearizorQR<Scalar_>::VecX LinearizorQR<Scalar_>::solve(
-    Scalar lambda) {
+template <class Scalar_, int POSE_SIZE>
+typename LinearizorQR<Scalar_, POSE_SIZE>::VecX
+LinearizorQR<Scalar_, POSE_SIZE>::solve(Scalar lambda) {
   // ////////////////////////////////////////////////////////////////////////
   // Stage 2: inside LM solver inner-loop
   // - scale pose Jacobians (1st inner it)
@@ -264,8 +265,8 @@ typename LinearizorQR<Scalar_>::VecX LinearizorQR<Scalar_>::solve(
   return inc;
 }
 
-template <class Scalar_>
-Scalar_ LinearizorQR<Scalar_>::apply(VecX&& inc) {
+template <class Scalar_, int POSE_SIZE>
+Scalar_ LinearizorQR<Scalar_, POSE_SIZE>::apply(VecX&& inc) {
   // backsubstitue landmarks and compute model cost difference
   Timer timer;
   Scalar l_diff = lqr_->back_substitute(inc);
@@ -281,21 +282,32 @@ Scalar_ LinearizorQR<Scalar_>::apply(VecX&& inc) {
 
   // update cameras
   for (size_t i = 0; i < bal_problem_.cameras().size(); i++) {
-    bal_problem_.cameras()[i].apply_inc_pose(inc.template segment<6>(i * 9));
+    const auto cam_inc = inc.template segment<POSE_SIZE>(i * POSE_SIZE);
+    bal_problem_.cameras()[i].apply_inc_pose(cam_inc.template head<kPoseDim>());
     bal_problem_.cameras()[i].apply_inc_intrinsics(
-        inc.template segment<3>(i * 9 + 6));
+        cam_inc.template tail<kIntrinsicsDim>());
   }
   IF_SET(it_summary_)->update_cameras_time_in_seconds = timer.elapsed();
 
   return l_diff;
 }
 
+#define INSTANTIATE_QR(ScalarT, PS) template class LinearizorQR<ScalarT, PS>;
+
 #ifdef ROOTBA_INSTANTIATIONS_FLOAT
-template class LinearizorQR<float>;
+INSTANTIATE_QR(float, 9)
+INSTANTIATE_QR(float, 10)
+INSTANTIATE_QR(float, 14)
+INSTANTIATE_QR(float, 18)
 #endif
 
 #ifdef ROOTBA_INSTANTIATIONS_DOUBLE
-template class LinearizorQR<double>;
+INSTANTIATE_QR(double, 9)
+INSTANTIATE_QR(double, 10)
+INSTANTIATE_QR(double, 14)
+INSTANTIATE_QR(double, 18)
 #endif
+
+#undef INSTANTIATE_QR
 
 }  // namespace rootba

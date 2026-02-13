@@ -103,6 +103,9 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::linearize_landmark(
 
   bool numerically_valid = true;
 
+  using Helper = BalBundleAdjustmentHelper<
+      Scalar, LandmarkBlockBase<T, Scalar, POSE_SIZE>::kIntrinsicsDim>;
+
   for (size_t i = 0; i < pose_idx.size(); i++) {
     size_t cam_idx = pose_idx[i];
     size_t obs_idx = i * 2;
@@ -111,14 +114,14 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::linearize_landmark(
     const auto& obs = lm_ptr_->obs.at(cam_idx);
     const auto& cam = cameras.at(cam_idx);
 
-    typename BalBundleAdjustmentHelper<Scalar>::MatRP Jp;
-    typename BalBundleAdjustmentHelper<Scalar>::MatRI Ji;
-    typename BalBundleAdjustmentHelper<Scalar>::MatRL Jl;
+    typename Helper::MatRP Jp;
+    typename Helper::MatRI Ji;
+    typename Helper::MatRL Jl;
 
     Vec2 res;
-    const bool valid = BalBundleAdjustmentHelper<Scalar>::linearize_point(
-        obs.pos, lm_ptr_->p_w, cam.T_c_w, cam.intrinsics, true, res, &Jp, &Ji,
-        &Jl);
+    const bool valid =
+        Helper::linearize_point(obs.pos, lm_ptr_->p_w, cam.T_c_w,
+                                cam.intrinsics, true, res, &Jp, &Ji, &Jl);
 
     if (!options_.use_valid_projections_only || valid) {
       numerically_valid = numerically_valid && Jl.array().isFinite().all() &&
@@ -128,12 +131,17 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::linearize_landmark(
 
       const Scalar res_squared = res.squaredNorm();
       const auto [weighted_error, weight] =
-          BalBundleAdjustmentHelper<Scalar>::compute_error_weight(
-              options_.residual_options, res_squared);
+          Helper::compute_error_weight(options_.residual_options, res_squared);
       const Scalar sqrt_weight = std::sqrt(weight);
 
-      storage.template block<2, 6>(obs_idx, pose_idx) = sqrt_weight * Jp;
-      storage.template block<2, 3>(obs_idx, pose_idx + 6) = sqrt_weight * Ji;
+      storage
+          .template block<2, LandmarkBlockBase<T, Scalar, POSE_SIZE>::kPoseDim>(
+              obs_idx, pose_idx) = sqrt_weight * Jp;
+      storage.template block<
+          2, LandmarkBlockBase<T, Scalar, POSE_SIZE>::kIntrinsicsDim>(
+          obs_idx,
+          pose_idx + LandmarkBlockBase<T, Scalar, POSE_SIZE>::kPoseDim) =
+          sqrt_weight * Ji;
       storage.template block<2, 3>(obs_idx, lm_idx) = sqrt_weight * Jl;
       storage.template block<2, 1>(obs_idx, res_idx) = sqrt_weight * res;
     }
@@ -530,9 +538,8 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_Q2TJp_T_Q2TJp_blockdiag(
   // we include the dampening rows (may be zeros if no dampening set)
   if (pose_mutex) {
     for (size_t i = 0; i < pose_idx.size(); i++) {
-      // using auto gives us a "reference" to the block
-      const auto Q2T_Jp =
-          storage.block(3, POSE_SIZE * i, num_rows - 3, POSE_SIZE);
+      const MatX Q2T_Jp =
+          storage.block(3, POSE_SIZE * i, num_rows - 3, POSE_SIZE).eval();
 
       const size_t cam_idx = pose_idx[i];
       {
@@ -543,8 +550,9 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_Q2TJp_T_Q2TJp_blockdiag(
     }
   } else {
     for (size_t i = 0; i < pose_idx.size(); i++) {
-      // using auto gives us a "reference" to the block
-      auto Q2T_Jp = storage.block(3, POSE_SIZE * i, num_rows - 3, POSE_SIZE);
+      const MatX Q2T_Jp =
+          storage.block(3, POSE_SIZE * i, num_rows - 3, POSE_SIZE).eval();
+
       const size_t cam_idx = pose_idx[i];
       accu.add(cam_idx, Q2T_Jp.transpose() * Q2T_Jp);
     }
@@ -561,7 +569,7 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_Jp_T_Jp_blockdiag(
 
   for (size_t i = 0; i < pose_idx.size(); i++) {
     // using auto gives us a "reference" to the block
-    auto Jp = storage.block(2 * i, POSE_SIZE * i, 2, POSE_SIZE);
+    const MatX Jp = storage.block(2 * i, POSE_SIZE * i, 2, POSE_SIZE).eval();
 
     size_t cam_idx = pose_idx[i];
     accu.add(cam_idx, Jp.transpose() * Jp);

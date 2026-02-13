@@ -41,13 +41,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace rootba {
 
-template <typename Scalar>
+template <typename Scalar, int INTRINSICS_SIZE_ = 3>
 class BalBundleAdjustmentHelper {
  public:
-  using IntrinsicsT = basalt::BalCamera<Scalar>;
+  using IntrinsicsT = basalt::GenericCamera<Scalar>;
 
   static constexpr size_t POSE_SIZE = 6;
-  static constexpr size_t INTRINSICS_SIZE = 3;
+  static constexpr size_t INTRINSICS_SIZE = INTRINSICS_SIZE_;
   static constexpr size_t CAMERA_SIZE = POSE_SIZE + INTRINSICS_SIZE;
   static constexpr size_t LANDMARK_SIZE = 3;
   static constexpr size_t RESIDUAL_SIZE = 2;

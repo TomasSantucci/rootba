@@ -84,10 +84,16 @@ LandmarkBlockFactory<Scalar, POSE_SIZE>::get_landmark_block(size_t obs_size) {
 
 #ifdef ROOTBA_INSTANTIATIONS_FLOAT
 template class LandmarkBlockFactory<float, 9>;
+template class LandmarkBlockFactory<float, 10>;
+template class LandmarkBlockFactory<float, 14>;
+template class LandmarkBlockFactory<float, 18>;
 #endif
 
 #ifdef ROOTBA_INSTANTIATIONS_DOUBLE
 template class LandmarkBlockFactory<double, 9>;
+template class LandmarkBlockFactory<double, 10>;
+template class LandmarkBlockFactory<double, 14>;
+template class LandmarkBlockFactory<double, 18>;
 #endif
 
 }  // namespace rootba

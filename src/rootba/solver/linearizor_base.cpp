@@ -36,6 +36,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "rootba/solver/linearizor_base.hpp"
 
+#include <type_traits>
+
 #include "rootba/bal/bal_bundle_adjustment_helper.hpp"
 #include "rootba/util/time_utils.hpp"
 
@@ -44,6 +46,33 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   if (POINTER_VAR) POINTER_VAR
 
 namespace rootba {
+
+namespace {
+
+template <typename Scalar, typename Fn>
+auto dispatch_intrinsics_size(const BalProblem<Scalar>& bal_problem, Fn&& fn) {
+  CHECK(!bal_problem.cameras().empty())
+      << "BAL problem must contain at least one camera";
+
+  const int intrinsics_size = bal_problem.cameras().front().intrinsics.getN();
+
+  switch (intrinsics_size) {
+    case 3:
+      return fn(std::integral_constant<int, 3>{});
+    case 4:
+      return fn(std::integral_constant<int, 4>{});
+    case 8:
+      return fn(std::integral_constant<int, 8>{});
+    case 12:
+      return fn(std::integral_constant<int, 12>{});
+    default:
+      LOG(FATAL) << "Unsupported intrinsics size " << intrinsics_size;
+  }
+
+  return fn(std::integral_constant<int, 3>{});
+}
+
+}  // namespace
 
 template <typename Scalar_>
 LinearizorBase<Scalar_>::LinearizorBase(
@@ -60,7 +89,12 @@ template <typename Scalar_>
 void LinearizorBase<Scalar_>::compute_error(ResidualInfo& ri) {
   Timer timer;
 
-  BalBundleAdjustmentHelper<Scalar>::compute_error(bal_problem_, options_, ri);
+  dispatch_intrinsics_size(bal_problem_, [&](auto intrinsics_tag) {
+    constexpr int kIntrinsicsSize = intrinsics_tag.value;
+    BalBundleAdjustmentHelper<Scalar, kIntrinsicsSize>::compute_error(
+        bal_problem_, options_, ri);
+    return 0;
+  });
 
   IF_SET(it_summary_)->residual_evaluation_time_in_seconds += timer.elapsed();
   IF_SET(summary_)->num_residual_evaluations += 1;

@@ -35,6 +35,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 #include "rootba/bal/bal_bundle_adjustment_helper.hpp"
 
+#include <type_traits>
 #include <variant>
 
 #include <tbb/blocked_range.h>
@@ -42,9 +43,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace rootba {
 
-template <typename Scalar>
+template <typename Scalar, int INTRINSICS_SIZE>
 std::tuple<Scalar, Scalar>
-BalBundleAdjustmentHelper<Scalar>::compute_error_weight(
+BalBundleAdjustmentHelper<Scalar, INTRINSICS_SIZE>::compute_error_weight(
     const BalResidualOptions& options, Scalar res_squared) {
   // TODO: create small class for computing weights and pre-compute huber
   // threshold squared
@@ -67,8 +68,8 @@ BalBundleAdjustmentHelper<Scalar>::compute_error_weight(
   }
 }
 
-template <typename Scalar>
-void BalBundleAdjustmentHelper<Scalar>::compute_error(
+template <typename Scalar, int INTRINSICS_SIZE>
+void BalBundleAdjustmentHelper<Scalar, INTRINSICS_SIZE>::compute_error(
     const BalProblem<Scalar>& bal_problem, const SolverOptions& options,
     ResidualInfo& error) {
   const bool ignore_validity_check = !options.use_projection_validity_check();
@@ -110,8 +111,8 @@ void BalBundleAdjustmentHelper<Scalar>::compute_error(
   error = error_accu.info;
 }
 
-template <typename Scalar>
-bool BalBundleAdjustmentHelper<Scalar>::linearize_point(
+template <typename Scalar, int INTRINSICS_SIZE>
+bool BalBundleAdjustmentHelper<Scalar, INTRINSICS_SIZE>::linearize_point(
     const Vec2& obs, const Vec3& lm_p_w, const SE3& T_c_w,
     const basalt::GenericCamera<Scalar>& intr, const bool ignore_validity_check,
     VecR& res, MatRP* d_res_d_xi, MatRI* d_res_d_i, MatRL* d_res_d_l) {
@@ -120,15 +121,32 @@ bool BalBundleAdjustmentHelper<Scalar>::linearize_point(
   Vec4 p_c_3d = T_c_w_mat * lm_p_w.homogeneous();
 
   Mat24 d_res_d_p;
-  bool projection_valid;
-  const auto* bal_intr = std::get_if<basalt::BalCamera<Scalar>>(&intr.variant);
-  CHECK(bal_intr != nullptr)
-      << "Manual linearization supports only bal intrinsics";
-  if (d_res_d_xi || d_res_d_i || d_res_d_l) {
-    projection_valid = bal_intr->project(p_c_3d, res, &d_res_d_p, d_res_d_i);
-  } else {
-    projection_valid = bal_intr->project(p_c_3d, res, nullptr, nullptr);
-  }
+  bool projection_valid = std::visit(
+      [&](const auto& cam) {
+        using CamT = std::decay_t<decltype(cam)>;
+
+        if constexpr (CamT::N == INTRINSICS_SIZE) {
+          Eigen::Matrix<Scalar, 2, CamT::N> d_res_d_i_local;
+
+          if (d_res_d_xi || d_res_d_i || d_res_d_l) {
+            const bool valid =
+                cam.project(p_c_3d, res, &d_res_d_p,
+                            d_res_d_i ? &d_res_d_i_local : nullptr);
+            if (d_res_d_i) {
+              *d_res_d_i = d_res_d_i_local;
+            }
+            return valid;
+          } else {
+            return cam.project(p_c_3d, res, nullptr, nullptr);
+          }
+        } else {
+          LOG(FATAL) << "Manual linearization compiled for intrinsics size "
+                     << INTRINSICS_SIZE << " but camera model provides "
+                     << CamT::N;
+        }
+        return false;
+      },
+      intr.variant);
   res -= obs;
 
   // valid &= res.array().isFinite().all();
@@ -153,14 +171,23 @@ bool BalBundleAdjustmentHelper<Scalar>::linearize_point(
   return projection_valid;
 }
 
+#define INSTANTIATE_HELPER(ScalarT, N) \
+  template class BalBundleAdjustmentHelper<ScalarT, N>;
+
 #ifdef ROOTBA_INSTANTIATIONS_FLOAT
-template class BalBundleAdjustmentHelper<float>;
+INSTANTIATE_HELPER(float, 3)
+INSTANTIATE_HELPER(float, 4)
+INSTANTIATE_HELPER(float, 8)
+INSTANTIATE_HELPER(float, 12)
 #endif
 
 // The helper in double is used by the ceres iteration callback, so always
 // compile it; it should not be a big compilation overhead.
-// #ifdef ROOTBA_INSTANTIATIONS_DOUBLE
-template class BalBundleAdjustmentHelper<double>;
-// #endif
+INSTANTIATE_HELPER(double, 3)
+INSTANTIATE_HELPER(double, 4)
+INSTANTIATE_HELPER(double, 8)
+INSTANTIATE_HELPER(double, 12)
+
+#undef INSTANTIATE_HELPER
 
 }  // namespace rootba

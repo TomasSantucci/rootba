@@ -36,12 +36,41 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "rootba/ceres/bal_iteration_callback.hpp"
 
+#include <type_traits>
+
 #include "rootba/bal/bal_bundle_adjustment_helper.hpp"
 #include "rootba/ceres/ba_log_utils.hpp"
 #include "rootba/ceres/option_utils.hpp"
 #include "rootba/util/time_utils.hpp"
 
 namespace rootba {
+
+namespace {
+
+template <typename Scalar, typename Fn>
+auto dispatch_intrinsics_size(const BalProblem<Scalar>& bal_problem, Fn&& fn) {
+  CHECK(!bal_problem.cameras().empty())
+      << "BAL problem must contain at least one camera";
+
+  const int intrinsics_size = bal_problem.cameras().front().intrinsics.getN();
+
+  switch (intrinsics_size) {
+    case 3:
+      return fn(std::integral_constant<int, 3>{});
+    case 4:
+      return fn(std::integral_constant<int, 4>{});
+    case 8:
+      return fn(std::integral_constant<int, 8>{});
+    case 12:
+      return fn(std::integral_constant<int, 12>{});
+    default:
+      LOG(FATAL) << "Unsupported intrinsics size " << intrinsics_size;
+  }
+
+  return fn(std::integral_constant<int, 3>{});
+}
+
+}  // namespace
 
 BalIterationCallback::BalIterationCallback(
     BaLog& log, BalProblem<double>& bal_problem,
@@ -79,8 +108,12 @@ ceres::CallbackReturnType BalIterationCallback::operator()(
     }
 
     ResidualInfo ri;
-    BalBundleAdjustmentHelper<double>::compute_error(bal_problem_, options_,
-                                                     ri);
+    dispatch_intrinsics_size(bal_problem_, [&](auto intr_tag) {
+      constexpr int kIntrinsicsSize = intr_tag.value;
+      BalBundleAdjustmentHelper<double, kIntrinsicsSize>::compute_error(
+          bal_problem_, options_, ri);
+      return 0;
+    });
     log_ceres_error(it, prev_it, ri);
 
     // TODO: compare ceres reported error and error in ri and warn/error if
