@@ -199,8 +199,8 @@ int main(int argc, char** argv) {
     if (show_frame.GuiChanged() || bal_state_changed) {
       // clip values
       show_frame.Meta().range[0] = 0;
-      show_frame.Meta().range[1] = bal_problem.num_cameras() - 1;
-      show_frame = std::min(show_frame.Get(), bal_problem.num_cameras() - 1);
+      show_frame.Meta().range[1] = bal_problem.num_keyframes() - 1;
+      show_frame = std::min(show_frame.Get(), bal_problem.num_keyframes() - 1);
       show_frame = std::max(show_frame.Get(), 0);
 
       update_image_overlay = true;
