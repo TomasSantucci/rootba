@@ -141,9 +141,9 @@ class BalProblem {
   };
 
   struct Landmark {
-    Vec3 p_w;                             // point position in world coordinates
-    Eigen::Vector3<uint8_t> color;        // RGB color
-    std::map<FrameIdx, Observation> obs;  // list of frame indices
+    Vec3 p_w;                       // point position in world coordinates
+    Eigen::Vector3<uint8_t> color;  // RGB color
+    std::map<TimeCamId, Observation> obs;  // list of frame indices
 
     void backup() { p_w_backup_ = p_w; }
 
@@ -165,7 +165,33 @@ class BalProblem {
   };
 
   using Cameras = std::vector<Camera>;
+  // Keyframe represents a rig (set of cameras with fixed relative transforms)
+  struct Keyframe {
+    // TODO@tsantucci: rename to something like Rig or Pose
+    SE3 T_w_i;  // IMU pose (world-to-IMU transformation)
+
+    void backup() { T_w_i_backup_ = T_w_i; }
+
+    void restore() { T_w_i = T_w_i_backup_; }
+
+    void apply_inc_pose(const Vec6& inc) {
+      T_w_i = Sophus::se3_expd(inc) * T_w_i;
+    }
+
+    template <typename Scalar2>
+    typename BalProblem<Scalar2>::Keyframe cast() const {
+      typename BalProblem<Scalar2>::Keyframe res;
+      res.T_w_i = T_w_i.template cast<Scalar2>();
+      return res;
+    }
+
+   private:
+    SE3 T_w_i_backup_;
+  };
+
   using Landmarks = std::vector<Landmark>;
+  using Keyframes = std::vector<Keyframe>;
+  using Calibration = basalt::Calibration<Scalar>;
 
   BalProblem() = default;
   explicit BalProblem(const std::string& path);
@@ -198,13 +224,19 @@ class BalProblem {
   void restore();
 
   inline const Cameras& cameras() const { return cameras_; }
+  void set_calibration(Calibration& calib) { calib_ = calib; };
+
   inline const Landmarks& landmarks() const { return landmarks_; }
+  inline const Keyframes& keyframes() const { return keyframes_; }
+  inline const Calibration& calib() const { return calib_; }
 
   inline Cameras& cameras() { return cameras_; }
   inline Landmarks& landmarks() { return landmarks_; }
+  inline Keyframes& keyframes() { return keyframes_; }
 
   inline int num_cameras() const { return signed_cast(cameras_.size()); }
   inline int num_landmarks() const { return signed_cast(landmarks_.size()); }
+  inline int num_keyframes() const { return signed_cast(keyframes_.size()); }
   int num_observations() const;
   int max_num_observations_per_lm() const;
   double compute_rcs_sparsity() const;
@@ -242,6 +274,9 @@ class BalProblem {
 
   Cameras cameras_;
   Landmarks landmarks_;
+  Keyframes keyframes_;
+
+  Calibration calib_;
 
   std::unordered_map<size_t, size_t> sequential_colmap_id_to_basalt_id;
   std::unordered_map<size_t, size_t> image_id_to_cam_id;
