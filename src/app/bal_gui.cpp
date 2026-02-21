@@ -45,7 +45,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "rootba/bal/bal_app_options.hpp"
 #include "rootba/bal/bal_problem.hpp"
-#include "rootba/ceres/bal_bundle_adjustment.hpp"
 #include "rootba/cli/bal_cli_utils.hpp"
 #include "rootba/pangolin/bal_image_overlay.hpp"
 #include "rootba/pangolin/bal_map_display.hpp"
@@ -113,24 +112,20 @@ int main(int argc, char** argv) {
       LOG(INFO) << "Options:\n" << options;
     }
 
-    if (options.solver.solver_type == SolverOptions::SolverType::CERES) {
-      bundle_adjust_ceres(bal_problem, options.solver);
-    } else {
-      if (!options.solver.use_double) {
+    if (!options.solver.use_double) {
 #ifdef ROOTBA_INSTANTIATIONS_FLOAT
-        BalProblem<float> bal_problem_tmp = bal_problem.copy_cast<float>();
-        bundle_adjust_manual(bal_problem_tmp, options.solver);
-        bal_problem = bal_problem_tmp.copy_cast<double>();
+      BalProblem<float> bal_problem_tmp = bal_problem.copy_cast<float>();
+      bundle_adjust_manual(bal_problem_tmp, options.solver);
+      bal_problem = bal_problem_tmp.copy_cast<double>();
 #else
         LOG(FATAL) << "Compiled without float support.";
 #endif
-      } else {
+    } else {
 #ifdef ROOTBA_INSTANTIATIONS_DOUBLE
-        bundle_adjust_manual(bal_problem, options.solver);
+      bundle_adjust_manual(bal_problem, options.solver);
 #else
         LOG(FATAL) << "Compiled without double support.";
 #endif
-      }
     }
     bal_problem.postprocress(options.dataset);
     bal_state_changed = true;
