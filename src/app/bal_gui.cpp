@@ -93,6 +93,8 @@ int main(int argc, char** argv) {
       archive(calib);
       LOG(INFO) << "Loaded calibration from file: "
                 << options.dataset.calibration_file;
+      // Load calibration into BalProblem and initialize keyframes
+      bal_problem.set_calibration(calib);
     }
   }
 
@@ -132,15 +134,9 @@ int main(int argc, char** argv) {
   });
   pangolin::Var<int>::Attach("ui.max_num_iterations",
                              options.solver.max_num_iterations, 0, 100);
-  Button save_bal("ui.save_bal", [&]() {
-    std::string out = options.dataset.save_bal;
-    if (out.empty()) out = "output.bal.txt";
-    bal_problem.save_bal(out);
-  });
-  Button save_euroc("ui.save_euroc", [&]() {
-    std::string out = options.dataset.save_bal;
-    if (out.empty()) out = "output_euroc.txt";
-    bal_problem.save_euroc(out, calib);
+  Button save_json("ui.save_json", [&]() {
+    std::string out = "output.json";
+    bal_problem.save_basalt(out);
   });
   pangolin::Var<double> obs_noise_sigma("ui.obs_noise_sigma", 0, 0, 2);
   Button add_noise("ui.add_noise", [&]() {

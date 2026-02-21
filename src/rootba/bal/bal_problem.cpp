@@ -45,6 +45,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <absl/container/flat_hash_set.h>
 #include <cereal/archives/binary.hpp>
 #include <glog/logging.h>
+#include <nlohmann/json.hpp>
 
 #include "rootba/bal/bal_dataset_options.hpp"
 #include "rootba/bal/bal_pipeline_summary.hpp"
@@ -186,230 +187,11 @@ class BalProblemLoader : public FileLoader<cereal::BinaryInputArchive> {
 
 template <typename Scalar>
 BalProblem<Scalar>::BalProblem(const std::string& path) {
-  load_bal(path);
+  load_basalt(path);
 }
 
 template <typename Scalar>
-void BalProblem<Scalar>::load_bal(const std::string& path) {
-  FILE* fptr = std::fopen(path.c_str(), "r");
-  if (fptr == nullptr) {
-    LOG(FATAL) << "Could not open '{}'"_format(path);
-  };
-
-  try {
-    // parse header
-    int num_cams;
-    int num_lms;
-    int num_obs;
-    fscan_or_throw(fptr, "%d", &num_cams);
-    fscan_or_throw(fptr, "%d", &num_lms);
-    fscan_or_throw(fptr, "%d", &num_obs);
-    CHECK_GT(num_cams, 0);
-    CHECK_GT(num_lms, 0);
-
-    // clear memory and re-allocate
-    if (cameras_.capacity() > unsigned_cast(num_cams)) {
-      decltype(cameras_)().swap(cameras_);
-    }
-    if (landmarks_.capacity() > unsigned_cast(num_lms)) {
-      decltype(landmarks_)().swap(landmarks_);
-    }
-    cameras_.resize(num_cams);
-    landmarks_.resize(num_lms);
-
-    // parse observations
-    for (int i = 0; i < num_obs; ++i) {
-      int cam_idx;
-      int lm_idx;
-      fscan_or_throw(fptr, "%d", &cam_idx);
-      fscan_or_throw(fptr, "%d", &lm_idx);
-      CHECK_GE(cam_idx, 0);
-      CHECK_LT(cam_idx, num_cams);
-      CHECK_GE(lm_idx, 0);
-      CHECK_LT(lm_idx, num_lms);
-
-      auto [obs, inserted] = landmarks_.at(lm_idx).obs.try_emplace(cam_idx);
-      CHECK(inserted) << "Invalid file '{}'"_format(path);
-      Eigen::Matrix<double, 2, 1> posd;
-      fscan_or_throw(fptr, posd);
-      obs->second.pos = posd.cast<Scalar>();
-
-      // For the camera frame we assume the positive z axis pointing
-      // forward in view direction and in the image, y is poiting down, x to the
-      // right. In the original BAL formulation, the camera points in negative z
-      // axis, y is up in the image. Thus when loading the data, we invert the y
-      // and z camera axes (y also in the image) in the perspective projection,
-      // we don't have the "minus" like in the original Snavely model.
-
-      // invert y axis
-      obs->second.pos.y() = -obs->second.pos.y();
-    }
-
-    // invert y and z axis (same as rotation around x by 180; self-inverse)
-    const SO3 axis_inversion = SO3(Vec3(1, -1, -1).asDiagonal());
-
-    // parse camera parameters
-    for (int i = 0; i < num_cams; ++i) {
-      Vec9 params;
-      Eigen::Matrix<double, 9, 1> paramsd;
-      fscan_or_throw(fptr, paramsd);
-      params = paramsd.cast<Scalar>();
-
-      auto& cam = cameras_.at(i);
-      cam.T_c_w.so3() = axis_inversion * SO3::exp(params.template head<3>());
-      cam.T_c_w.translation() = axis_inversion * params.template segment<3>(3);
-
-      cam.intrinsics = CameraModel::fromString("bal");
-      cam.intrinsics.setParams(params.template head<3>());
-    }
-
-    // parse landmark parameters
-    for (int i = 0; i < num_lms; ++i) {
-      Eigen::Matrix<double, 3, 1> p_wd;
-      fscan_or_throw(fptr, p_wd);
-      landmarks_.at(i).p_w = p_wd.cast<Scalar>();
-    }
-  } catch (const std::exception& e) {
-    LOG(FATAL) << "Failed to parse '{}'"_format(path);
-  }
-
-  if (!quiet_) {
-    LOG(INFO)
-        << "Loaded BAL problem ({} cams, {} lms, {} obs) from '{}'"_format(
-               num_cameras(), num_landmarks(), num_observations(), path);
-  }
-
-  // Current implementation uses int to compute state vector indices
-  CHECK_LT(num_cameras(), std::numeric_limits<int>::max() / CAM_STATE_SIZE);
-
-  std::fclose(fptr);
-}
-
-template <typename Scalar>
-void BalProblem<Scalar>::load_bundler(const std::string& path) {
-  FILE* fptr = std::fopen(path.c_str(), "r");
-  if (fptr == nullptr) {
-    LOG(FATAL) << "Could not open '{}'"_format(path);
-  };
-
-  try {
-    // expect one comment line
-    readcommentline_or_throw(fptr);
-    // parse header
-    int num_cams;
-    int num_lms;
-    fscan_or_throw(fptr, "%d", &num_cams);
-    fscan_or_throw(fptr, "%d", &num_lms);
-    CHECK_GT(num_cams, 0);
-    CHECK_GT(num_lms, 0);
-
-    // clear memory and re-allocate
-    cameras_.clear();
-    if (cameras_.capacity() > unsigned_cast(num_cams)) {
-      decltype(cameras_)().swap(cameras_);
-    }
-    cameras_.reserve(num_cams);
-
-    // invert y and z axis (same as rotation around x by 180; self-inverse)
-    const SO3 axis_inversion = SO3(Vec3(1, -1, -1).asDiagonal());
-
-    // not all cameras are initialized; so keep mapping from index in loaded
-    // file to actual index
-    std::unordered_map<int, int> cam_idx_mapping;
-
-    // parse cameras
-    for (int i = 0; i < num_cams; ++i) {
-      Eigen::Matrix<double, 15, 1> paramsd;
-      fscan_or_throw(fptr, paramsd);
-
-      if (paramsd(0) == 0) {
-        // focal length 0 --> assume uninitialzed camera
-        continue;
-      }
-
-      Eigen::Matrix<Scalar, 15, 1> params = paramsd.cast<Scalar>();
-
-      // remember where camera i is in the cameras_ vector
-      cam_idx_mapping[i] = int(cameras_.size());
-
-      // create camera object
-      auto& cam = cameras_.emplace_back();
-      cam.intrinsics = CameraModel::fromString("bal");
-      cam.intrinsics.setParams(params.template head<3>());
-      Eigen::Map<Eigen::Matrix<Scalar, 3, 3, Eigen::RowMajor>> R(params.data() +
-                                                                 3);
-      cam.T_c_w.so3() = axis_inversion * SO3(R);
-      cam.T_c_w.translation() = axis_inversion * params.template tail<3>();
-    }
-
-    if (landmarks_.capacity() > unsigned_cast(num_lms)) {
-      decltype(landmarks_)().swap(landmarks_);
-    }
-    landmarks_.resize(num_lms);
-
-    // parse landmarks and observation list
-    for (int i = 0; i < num_lms; ++i) {
-      auto& lm = landmarks_.at(i);
-
-      // parse 3 vector for position
-      Eigen::Matrix<double, 3, 1> p_wd;
-      fscan_or_throw(fptr, p_wd);
-      lm.p_w = p_wd.cast<Scalar>();
-
-      // parse and ignore 3 vector for color
-      fscan_or_throw(fptr, p_wd);
-
-      // parse view list
-      int num_obs;
-      fscan_or_throw(fptr, "%d", &num_obs);
-
-      for (int j = 0; j < num_obs; ++j) {
-        int cam_idx;
-        int feature_idx;  // we ignore this
-        fscan_or_throw(fptr, "%d", &cam_idx);
-        fscan_or_throw(fptr, "%d", &feature_idx);
-
-        Eigen::Matrix<double, 2, 1> posd;
-        fscan_or_throw(fptr, posd);
-
-        const bool cam_exists = cam_idx_mapping.count(cam_idx);
-        if (cam_exists) {
-          auto [obs, inserted] =
-              lm.obs.try_emplace(cam_idx_mapping.at(cam_idx));
-          CHECK(inserted) << "Invalid file '{}'"_format(path);
-          obs->second.pos = posd.cast<Scalar>();
-
-          // For the camera frame we assume the positive z axis pointing
-          // forward in view direction and in the image, y is poiting down, x to
-          // the right. In the original BAL formulation, the camera points in
-          // negative z axis, y is up in the image. Thus when loading the data,
-          // we invert the y and z camera axes (y also in the image) in the
-          // perspective projection, we don't have the "minus" like in the
-          // original Snavely model.
-
-          // invert y axis
-          obs->second.pos.y() = -obs->second.pos.y();
-        }
-      }
-    }
-  } catch (const std::exception& e) {
-    LOG(FATAL) << "Failed to parse '{}'"_format(path);
-  }
-
-  if (!quiet_) {
-    LOG(INFO)
-        << "Loaded BAL problem ({} cams, {} lms, {} obs) from '{}'"_format(
-               num_cameras(), num_landmarks(), num_observations(), path);
-  }
-
-  // Current implementation uses int to compute state vector indices
-  CHECK_LT(num_cameras(), std::numeric_limits<int>::max() / CAM_STATE_SIZE);
-
-  std::fclose(fptr);
-}
-
-template <typename Scalar>
-void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
+void BalProblem<Scalar>::load_basalt(const std::string& path_str) {
   using Quaternion = Eigen::Quaternion<Scalar>;
   using std::getline;
   using std::ifstream;
@@ -419,323 +201,163 @@ void BalProblem<Scalar>::load_colmap(const std::string& path_str) {
   using std::filesystem::is_directory;
   using std::filesystem::path;
 
-  path dir = path{path_str} / "sparse" / "0";
-  if (!is_directory(dir)) {
-    LOG(FATAL) << "Invalid COLMAP dataset '{}'"_format(dir.string());
+  // Read and parse JSON file
+  ifstream file(path_str);
+  if (!file.is_open()) {
+    throw std::runtime_error("Failed to open file: " + path_str);
   }
 
-  cameras_.clear();
+  nlohmann::json j;
+  try {
+    file >> j;
+  } catch (const std::exception& e) {
+    throw std::runtime_error("Failed to parse JSON: " + string(e.what()));
+  }
+
+  // Clear existing data
+  keyframes_.clear();
   landmarks_.clear();
 
-  try {
-    unordered_map<ssize_t, size_t> pid_to_idx{};
+  // Load keyframes - use map to handle arbitrary IDs
+  unordered_map<size_t, size_t> kf_id_map;  // JSON id -> vector index
+  if (j.contains("keyframes")) {
+    const auto& kfs_json = j["keyframes"];
+    keyframes_.resize(kfs_json.size());
 
-    // Read cameras.txt
-    /* Example format:
-    # Camera list with one line of data per camera:
-    #   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]
-    # Number of cameras: 3
-    1 SIMPLE_PINHOLE 3072 2304 2559.81 1536 1152
-    2 PINHOLE 3072 2304 2560.56 2560.56 1536 1152
-    3 SIMPLE_RADIAL 3072 2304 2559.69 1536 1152 -0.0218531
-    */
-    struct ColmapCamera {
-      std::string model;
-      std::vector<Scalar> params;
-      Scalar cx = 0;
-      Scalar cy = 0;
-    };
-    unordered_map<ssize_t, ColmapCamera> colmap_cameras;
+    size_t idx = 0;
+    for (const auto& kf_json : kfs_json) {
+      size_t id = kf_json["id"];
+      kf_id_map[id] = idx;
 
-    path cameras_txt = dir / "cameras.txt";
-    ifstream f(cameras_txt);
-    string line;
-    while (getline(f, line)) {
-      if (line.empty() || line[0] == '#') continue;
+      const auto& T_w_i_data = kf_json["T_w_i"];
 
-      istringstream ss(line);
+      // T_w_i is [qw, qx, qy, qz, tx, ty, tz]
+      Quaternion q(static_cast<Scalar>(T_w_i_data[0]),
+                   static_cast<Scalar>(T_w_i_data[1]),
+                   static_cast<Scalar>(T_w_i_data[2]),
+                   static_cast<Scalar>(T_w_i_data[3]));
+      Vec3 t(static_cast<Scalar>(T_w_i_data[4]),
+             static_cast<Scalar>(T_w_i_data[5]),
+             static_cast<Scalar>(T_w_i_data[6]));
 
-      ssize_t camera_id = 0;
-      string model;
-      ssize_t width = 0;
-      ssize_t height = 0;
-      bool read = bool(ss >> camera_id >> model >> width >> height);
-      CHECK(read) << "cameras.txt: '{}'"_format(line);
-      camera_id -= 1;  // COLMAP camera IDs are 1-based
-
-      if (model == "SIMPLE_RADIAL") {
-        Scalar f = 0;
-        Scalar cx = 0;
-        Scalar cy = 0;
-        Scalar k1 = 0;
-        bool read = bool(ss >> f >> cx >> cy >> k1);
-        CHECK(read) << "cameras.txt: '{}'"_format(line);
-        colmap_cameras[camera_id] = ColmapCamera{"bal", {f, k1, 0}, cx, cy};
-      } else if (model == "PINHOLE") {
-        Scalar fx = 0, fy = 0, cx = 0, cy = 0;
-        bool read = bool(ss >> fx >> fy >> cx >> cy);
-        CHECK(read) << "cameras.txt: '{}'"_format(line);
-        colmap_cameras[camera_id] =
-            ColmapCamera{"pinhole", {fx, fy, cx, cy}, cx, cy};
-      } else if (model == "SIMPLE_PINHOLE") {
-        Scalar f = 0, cx = 0, cy = 0;
-        bool read = bool(ss >> f >> cx >> cy);
-        CHECK(read) << "cameras.txt: '{}'"_format(line);
-        colmap_cameras[camera_id] =
-            ColmapCamera{"pinhole", {f, f, cx, cy}, cx, cy};
-      } else if (model == "FULL_OPENCV") {
-        Scalar fx = 0, fy = 0, cx = 0, cy = 0, k1 = 0, k2 = 0, p1 = 0, p2 = 0,
-               k3 = 0, k4 = 0, k5 = 0, k6 = 0;
-        bool read = bool(ss >> fx >> fy >> cx >> cy >> k1 >> k2 >> p1 >> p2 >>
-                         k3 >> k4 >> k5 >> k6);
-        CHECK(read) << "cameras.txt: '{}'"_format(line);
-        colmap_cameras[camera_id] =
-            ColmapCamera{"pinhole-radtan8",
-                         {fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6},
-                         cx,
-                         cy};
-      } else if (model == "OPENCV_FISHEYE") {
-        Scalar fx = 0, fy = 0, cx = 0, cy = 0, k1 = 0, k2 = 0, k3 = 0, k4 = 0;
-        bool read = bool(ss >> fx >> fy >> cx >> cy >> k1 >> k2 >> k3 >> k4);
-        CHECK(read) << "cameras.txt: '{}'"_format(line);
-        colmap_cameras[camera_id] =
-            ColmapCamera{"kb4", {fx, fy, cx, cy, k1, k2, k3, k4}, cx, cy};
-      } else {
-        LOG(FATAL) << "Not implemented: COLMAP camera model '{}'"_format(model);
-      }
+      keyframes_[idx].T_w_i = SE3(q, t);
+      keyframes_[idx].t_ns = id;
+      idx++;
     }
+  }
 
-    // Read images.txt
-    /* Example format:
-    # Image list with two lines of data per image:
-    #   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
-    #   POINTS2D[] as (X, Y, POINT3D_ID)
-    # Number of images: 2, mean observations per image: 2
-    1 0.851773 0.0165051 0.503764 -0.142941 -0.737434 1.02973 3.74354 1
-    P1180141.JPG 2362.39 248.498 58396 1784.7 268.254 59027 1784.7 268.254 -1 2
-    0.851773 0.0165051 0.503764 -0.142941 -0.737434 1.02973 3.74354 1
-    P1180142.JPG 1190.83 663.957 23056 1258.77 640.354 59070
-    */
-    path images_txt = dir / "images.txt";
-    f = ifstream{images_txt};
-    while (getline(f, line)) {
-      if (line.empty() || line[0] == '#') continue;
+  // Load landmarks - use map to handle arbitrary IDs
+  unordered_map<size_t, size_t> lm_id_map;  // JSON id -> vector index
+  if (j.contains("landmarks")) {
+    const auto& lms_json = j["landmarks"];
+    landmarks_.resize(lms_json.size());
 
-      istringstream ss(line);
+    size_t idx = 0;
+    for (const auto& lm_json : lms_json) {
+      size_t id = lm_json["id"];
+      lm_id_map[id] = idx;
 
-      ssize_t image_id = 0;
-      Scalar qw = 0;
-      Scalar qx = 0;
-      Scalar qy = 0;
-      Scalar qz = 0;
-      Scalar tx = 0;
-      Scalar ty = 0;
-      Scalar tz = 0;
-      ssize_t camera_id = 0;
-      string image_name;
-      bool read = bool(ss >> image_id >> qw >> qx >> qy >> qz >> tx >> ty >>
-                       tz >> camera_id >> image_name);
-      CHECK(read) << "images.txt: '{}'"_format(line);
+      const auto& p_w_data = lm_json["p_w"];
 
-      // Convert COLMAP id to zero-based index
-      camera_id -= 1;
-      image_id -= 1;
-      if (cameras_.size() <= size_t(image_id)) cameras_.resize(image_id + 1);
-
-      Camera& cam = cameras_.at(image_id);
-      CHECK(colmap_cameras.find(camera_id) != colmap_cameras.end())
-          << "missing camera_id=" << camera_id;
-      ColmapCamera& colcam = colmap_cameras.at(camera_id);
-      cam.T_c_w.so3() = SO3(Quaternion(qw, qx, qy, qz));
-      cam.T_c_w.translation() = Vec3{tx, ty, tz};
-      cam.intrinsics = CameraModel::fromString(colcam.model);
-      Eigen::Matrix<Scalar, Eigen::Dynamic, 1> intr;
-      intr.resize(colcam.params.size());
-      for (size_t i = 0; i < colcam.params.size(); ++i) {
-        intr(static_cast<int>(i)) = colcam.params[i];
-      }
-      cam.intrinsics.setParams(intr);
-
-      getline(f, line);
-      ss = istringstream(line);
-      Scalar x = 0;
-      Scalar y = 0;
-      ssize_t pid = 0;
-      while (ss >> x >> y >> pid) {
-        if (pid <= 0) continue;
-
-        size_t lmidx = -1;
-        if (pid_to_idx.find(pid) == pid_to_idx.end()) {
-          pid_to_idx[pid] = landmarks_.size();
-          landmarks_.emplace_back();
-          lmidx = landmarks_.size() - 1;
-        } else {
-          lmidx = pid_to_idx[pid];
-        }
-
-        // Note: colmap can have >1 obs of same point in one image, use last one
-        if (colcam.model == "bal")
-          landmarks_.at(lmidx).obs[image_id] = {{x - colcam.cx, y - colcam.cy}};
-        else
-          landmarks_.at(lmidx).obs[image_id] = {{x, y}};
-      }
+      landmarks_[idx].p_w = Vec3(static_cast<Scalar>(p_w_data[0]),
+                                 static_cast<Scalar>(p_w_data[1]),
+                                 static_cast<Scalar>(p_w_data[2]));
+      landmarks_[idx].color = Eigen::Vector3<uint8_t>(128, 128, 128);
+      idx++;
     }
+  }
 
-    // Read points3D.txt
-    /* points3D.txt example format:
-    # 3D point list with one line of data per point:
-    #   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)
-    # Number of points: 3, mean track length: 3.3334
-    63390 1.67241 0.292931 0.609726 115 121 122 1.33927 16 6542 15 7345 6 6714
-    14 7227 63376 2.01848 0.108877 -0.0260841 102 209 250 1.73449 16 6519 15
-    7322 14 7212 8 3991 63371 1.71102 0.28566 0.53475 245 251 249 0.612829 118
-    4140 117 12
-    */
-    path points3d_txt = dir / "points3D.txt";
-    f = ifstream{points3d_txt};
-    while (getline(f, line)) {
-      if (line.empty() || line[0] == '#') continue;
+  // Load observations
+  if (j.contains("observations")) {
+    const auto& obs_json = j["observations"];
 
-      istringstream ss(line);
-      ssize_t pid = 0;
-      Scalar x = 0;
-      Scalar y = 0;
-      Scalar z = 0;
-      Scalar r = 0;
-      Scalar g = 0;
-      Scalar b = 0;
-      Scalar error = 0;
-      bool read = bool(ss >> pid >> x >> y >> z >> r >> g >> b >> error);
-      CHECK(read) << "points3D.txt: '{}'"_format(line);
-      CHECK(pid_to_idx.find(pid) != pid_to_idx.end()) << "missing pid=" << pid;
-      Landmark& lm = landmarks_.at(pid_to_idx.at(pid));
-      lm.p_w = {x, y, z};
-      lm.color = {uint8_t(r), uint8_t(g), uint8_t(b)};
+    for (const auto& obs : obs_json) {
+      size_t kf_id = obs["kf_id"];
+      size_t cam_id = obs["cam_id"];
+      size_t lm_id = obs["lm_id"];
+      const auto& pos_data = obs["pos"];
+
+      // Map JSON IDs to vector indices
+      size_t kf_idx = kf_id_map.at(kf_id);
+      size_t lm_idx = lm_id_map.at(lm_id);
+
+      TimeCamId tcid(kf_idx, cam_id);
+      Observation observation;
+      observation.pos = Vec2(static_cast<Scalar>(pos_data[0]),
+                             static_cast<Scalar>(pos_data[1]));
+
+      landmarks_[lm_idx].obs[tcid] = observation;
     }
+  }
 
-    // Read image_id_to_frame_id.txt which maps each colmap image ID to a basalt
-    // TimeCamId
-    path image_id_to_frame_id_txt = dir / "image_id_to_frame_id.txt";
-    if (std::filesystem::exists(image_id_to_frame_id_txt)) {
-      f = ifstream{image_id_to_frame_id_txt};
-      while (getline(f, line)) {
-        if (line.empty() || line[0] == '#') continue;
-
-        istringstream ss(line);
-        ssize_t image_id = 0;
-        ssize_t frame_id = 0;
-        ssize_t cam_id = 0;
-        bool read = bool(ss >> image_id >> frame_id >> cam_id);
-        CHECK(read) << "image_id_to_frame_id.txt: '{}'"_format(line);
-        sequential_colmap_id_to_basalt_id[image_id] = frame_id;
-        image_id_to_cam_id[image_id] = cam_id;
-      }
-    }
-  } catch (const std::exception& e) {
-    LOG(ERROR)
-        << "Exception caught while loading COLMAP dataset '{}'\n'{}'"_format(
-               dir.string(), e.what());
+  if (!quiet_) {
+    LOG(INFO) << "Loaded Basalt format: " << num_keyframes() << " keyframes, "
+              << num_landmarks() << " landmarks, " << num_observations()
+              << " observations";
   }
 }
 
 template <typename Scalar>
-bool BalProblem<Scalar>::load_rootba(const std::string& path) {
-  if constexpr (std::is_same_v<Scalar, double>) {
-    return BalProblemLoader(path, *this).load();
-  } else {
-    BalProblem<double> temp;
-    bool res = BalProblemLoader(path, temp).load();
-    *this = temp.copy_cast<Scalar>();
-    return res;
-  }
-}
-
-template <typename Scalar>
-bool BalProblem<Scalar>::save_rootba(const std::string& path) {
-  if constexpr (std::is_same_v<Scalar, double>) {
-    return BalProblemSaver(path, *this).save();
-  } else {
-    auto temp = copy_cast<double>();
-    return BalProblemSaver(path, temp).save();
-  }
-}
-
-template <typename Scalar>
-bool BalProblem<Scalar>::save_bal(const std::string& path) {
+bool BalProblem<Scalar>::save_basalt(const std::string& path) {
   using Vec3 = Eigen::Matrix<Scalar, 3, 1>;
-  FILE* fptr = std::fopen(path.c_str(), "w");
-  if (fptr == nullptr) {
-    LOG(FATAL) << "Could not open file for writing: '" << path << "'";
-    return false;
+
+  nlohmann::json j;
+
+  // Save keyframes
+  j["keyframes"] = nlohmann::json::array();
+  for (size_t i = 0; i < keyframes_.size(); ++i) {
+    const auto& kf = keyframes_[i];
+    nlohmann::json kf_json;
+    kf_json["id"] = kf.t_ns;
+
+    auto q = kf.T_w_i.unit_quaternion();
+    auto t = kf.T_w_i.translation();
+
+    kf_json["T_w_i"] = {q.w(), q.x(), q.y(), q.z(), t.x(), t.y(), t.z()};
+
+    j["keyframes"].push_back(kf_json);
   }
 
-  int num_cams = static_cast<int>(cameras_.size());
-  int num_lms = static_cast<int>(landmarks_.size());
-  int num_obs = 0;
-  for (const auto& lm : landmarks_) num_obs += lm.obs.size();
+  // Save landmarks
+  j["landmarks"] = nlohmann::json::array();
+  for (size_t i = 0; i < landmarks_.size(); ++i) {
+    const auto& lm = landmarks_[i];
+    nlohmann::json lm_json;
+    lm_json["id"] = i;
+    lm_json["p_w"] = {lm.p_w.x(), lm.p_w.y(), lm.p_w.z()};
+    j["landmarks"].push_back(lm_json);
+  }
 
-  fprintf(fptr, "%d %d %d\n", num_cams, num_lms, num_obs);
-
-  for (int lm_idx = 0; lm_idx < int(landmarks_.size()); ++lm_idx) {
-    const auto& lm = landmarks_[lm_idx];
-    for (const auto& [cam_idx, obs] : lm.obs) {
-      fprintf(fptr, "%d %d ", cam_idx, lm_idx);
-      fprintf(fptr, "%lf %lf\n", obs.pos.x(), -obs.pos.y());  // Invert Y
+  // Save observations
+  j["observations"] = nlohmann::json::array();
+  for (size_t lm_id = 0; lm_id < landmarks_.size(); ++lm_id) {
+    const auto& lm = landmarks_[lm_id];
+    for (const auto& [tcid, obs] : lm.obs) {
+      nlohmann::json obs_json;
+      obs_json["kf_id"] = tcid.frame_id;
+      obs_json["cam_id"] = tcid.cam_id;
+      obs_json["lm_id"] = lm_id;
+      obs_json["pos"] = {obs.pos.x(), obs.pos.y()};
+      j["observations"].push_back(obs_json);
     }
   }
 
-  const SO3 axis_inversion = SO3(Vec3(1, -1, -1).asDiagonal());
-  for (const auto& cam : cameras_) {
-    SO3 R = axis_inversion * cam.T_c_w.so3();
-    Vec3 r = R.log();
-    Vec3 t = axis_inversion * cam.T_c_w.translation();
-    Vec3 intr = cam.intrinsics.getParam();
-    fprintf(fptr, "%lf %lf %lf ", r.x(), r.y(), r.z());
-    fprintf(fptr, "%lf %lf %lf ", t.x(), t.y(), t.z());
-    fprintf(fptr, "%lf %lf %lf\n", intr(0), intr(1), intr(2));
-  }
-
-  for (const auto& lm : landmarks_) {
-    fprintf(fptr, "%lf %lf %lf\n", lm.p_w.x(), lm.p_w.y(), lm.p_w.z());
-  }
-  std::fclose(fptr);
-  return true;
-}
-
-template <typename Scalar>
-bool BalProblem<Scalar>::save_euroc(const std::string& path,
-                                    const basalt::Calibration<double>& calib) {
-  FILE* fptr = std::fopen(path.c_str(), "w");
-  if (fptr == nullptr) {
-    LOG(FATAL) << "Could not open file for writing: '" << path << "'";
+  // Write to file
+  std::ofstream file(path);
+  if (!file.is_open()) {
+    LOG(ERROR) << "Could not open file for writing: '" << path << "'";
     return false;
   }
-  fprintf(fptr,
-          "#timestamp [ns],p_RS_R_x [m],p_RS_R_y [m],p_RS_R_z [m],"
-          "q_RS_w [],q_RS_x [],q_RS_y [],q_RS_z []\n");
-  const SE3 T_c_i = calib.T_i_c[0].inverse().cast<Scalar>();
-  for (size_t cam_idx = 0; cam_idx < cameras_.size(); ++cam_idx) {
-    if (image_id_to_cam_id[cam_idx + 1] != 1) {
-      // We save only one pose per keyframe, taking the first camera as
-      // reference
-      continue;
-    }
 
-    const auto& cam = cameras_[cam_idx];
-    const SE3 T_w_c = cam.T_c_w.inverse();
-    const SE3 T_w_i = T_w_c * T_c_i;
-    const Vec3 t = T_w_i.translation();
-    const SO3 R = T_w_i.so3();
-    const Eigen::Quaternion<Scalar> q = R.unit_quaternion();
-    const size_t frame_id =
-        sequential_colmap_id_to_basalt_id.count(cam_idx + 1)
-            ? sequential_colmap_id_to_basalt_id.at(cam_idx + 1)
-            : cam_idx;
+  file << j.dump(2);  // Pretty print with 2-space indentation
+  file.close();
 
-    fprintf(fptr, "%lu,%lf,%lf,%lf,%lf,%lf,%lf,%lf\n", frame_id, t.x(), t.y(),
-            t.z(), q.w(), q.x(), q.y(), q.z());
+  if (!quiet_) {
+    LOG(INFO) << "Saved Basalt format: " << num_keyframes() << " keyframes, "
+              << num_landmarks() << " landmarks, " << num_observations()
+              << " observations to " << path;
   }
-  std::fclose(fptr);
+
   return true;
 }
 
@@ -795,11 +417,9 @@ void BalProblem<Scalar>::normalize(const double new_scale) {
     lm.p_w = scale * (lm.p_w - median);
   }
 
-  // update cameras: center = scale * (center - median)
-  for (auto& cam : cameras_) {
-    SE3 T_w_c = cam.T_c_w.inverse();
-    T_w_c.translation() = scale * (T_w_c.translation() - median);
-    cam.T_c_w = T_w_c.inverse();
+  // update keyframes: center = scale * (center - median)
+  for (auto& kf : keyframes_) {
+    kf.T_w_i.translation() = scale * (kf.T_w_i.translation() - median);
   }
 }
 
@@ -819,8 +439,10 @@ void BalProblem<Scalar>::filter_obs(const double threshold) {
   // threshold.
   for (auto& lm : landmarks_) {
     for (auto it = lm.obs.cbegin(); it != lm.obs.cend();) {
-      const auto& cam = cameras_.at(it->first);
-      Vec3 p3d_cam = cam.T_c_w * lm.p_w;
+      TimeCamId tcid = it->first;
+      const auto& kf = keyframes_.at(tcid.frame_id);
+      SE3 T_w_c = kf.T_w_i * calib_.T_i_c[tcid.cam_id];
+      Vec3 p3d_cam = T_w_c.inverse() * lm.p_w;
 
       if (p3d_cam.z() < threshold) {
         it = lm.obs.erase(it);
@@ -844,6 +466,7 @@ template <typename Scalar>
 void BalProblem<Scalar>::perturb(double rotation_sigma,
                                  double translation_sigma,
                                  double landmark_sigma, int seed) {
+  // TODO@tsantucci: perturb keyframes, not cameras
   CHECK_GE(rotation_sigma, 0.0);
   CHECK_GE(translation_sigma, 0.0);
   CHECK_GE(landmark_sigma, 0.0);
@@ -894,46 +517,12 @@ void BalProblem<Scalar>::postprocress(const BalDatasetOptions& options,
   Timer t;
 
   if (options.save_output) {
-    save_rootba(options.output_optimized_path);
-  }
-
-  if (options.save_bal != "") {
-    save_bal(options.save_bal);
+    save_basalt(options.output_optimized_path + "/output.json");
   }
 
   if (timing_summary) {
     timing_summary->postprocess_time = t.elapsed();
   }
-}
-
-template <typename Scalar>
-void BalProblem<Scalar>::copy_to_camera_state(VecX& camera_state) const {
-  // Compute total size dynamically (pose 7 + intrinsics per cam).
-  int total_size = 0;
-  for (const auto& cam : cameras_) {
-    total_size += 7 + cam.intrinsics.getN();
-  }
-  camera_state.resize(total_size);
-
-  int offset = 0;
-  for (const auto& cam : cameras_) {
-    const int block_size = 7 + cam.intrinsics.getN();
-    camera_state.segment(offset, block_size) = cam.params();
-    offset += block_size;
-  }
-}
-
-template <typename Scalar>
-void BalProblem<Scalar>::copy_from_camera_state(const VecX& camera_state) {
-  int offset = 0;
-  for (auto& cam : cameras_) {
-    const int block_size = 7 + cam.intrinsics.getN();
-    CHECK_GE(camera_state.size(), offset + block_size);
-    cam.from_params(camera_state.segment(offset, block_size));
-    offset += block_size;
-  }
-  CHECK_EQ(offset, camera_state.size())
-      << "Camera state vector size does not match accumulated block sizes.";
 }
 
 template <typename Scalar>
@@ -944,6 +533,9 @@ void BalProblem<Scalar>::backup() {
   for (auto& lm : landmarks_) {
     lm.backup();
   }
+  for (auto& kf : keyframes_) {
+    kf.backup();
+  }
 }
 
 template <typename Scalar>
@@ -953,6 +545,9 @@ void BalProblem<Scalar>::restore() {
   }
   for (auto& lm : landmarks_) {
     lm.restore();
+  }
+  for (auto& kf : keyframes_) {
+    kf.restore();
   }
 }
 
@@ -995,6 +590,9 @@ struct default_initialized_atomic_bool : public std::atomic<bool> {
 
 template <typename Scalar>
 double BalProblem<Scalar>::compute_rcs_sparsity() const {
+  // TODO@tsantucci: implement this for the new keyframe approach
+#if 0
+
   const int num_cams = num_cameras();
   const int num_rcs_blocks = num_cams * num_cams;
 
@@ -1060,6 +658,9 @@ double BalProblem<Scalar>::compute_rcs_sparsity() const {
 #endif
 
   return 1. - num_non_zero_rcs_blocks / double(num_rcs_blocks);
+#endif
+
+  return 0.0;
 }
 
 template <class Scalar>
@@ -1143,22 +744,7 @@ BalProblem<Scalar> load_normalized_bal_problem(
   // load dataset as double
   BalProblem<double> bal_problem;
   bal_problem.set_quiet(options.quiet);
-  switch (input_type) {
-    case BalDatasetOptions::DatasetType::ROOTBA:
-      bal_problem.load_rootba(options.input);
-      break;
-    case BalDatasetOptions::DatasetType::BAL:
-      bal_problem.load_bal(options.input);
-      break;
-    case BalDatasetOptions::DatasetType::BUNDLER:
-      bal_problem.load_bundler(options.input);
-      break;
-    case BalDatasetOptions::DatasetType::COLMAP:
-      bal_problem.load_colmap(options.input);
-      break;
-    default:
-      LOG(FATAL) << "unreachable";
-  }
+  bal_problem.load_basalt(options.input);
 
   const double time_load = timer.reset();
 

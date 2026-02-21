@@ -169,6 +169,7 @@ class BalProblem {
   struct Keyframe {
     // TODO@tsantucci: rename to something like Rig or Pose
     SE3 T_w_i;  // IMU pose (world-to-IMU transformation)
+    size_t t_ns;
 
     void backup() { T_w_i_backup_ = T_w_i; }
 
@@ -196,15 +197,10 @@ class BalProblem {
   BalProblem() = default;
   explicit BalProblem(const std::string& path);
 
-  void load_bal(const std::string& path);
-  void load_bundler(const std::string& path);
-  void load_colmap(const std::string& path);
+  void load_basalt(const std::string& path);
 
-  bool load_rootba(const std::string& path);
-  bool save_rootba(const std::string& path);
-  bool save_bal(const std::string& path);
-  bool save_euroc(const std::string& path,
-                  const basalt::Calibration<double>& calib);
+  bool save_basalt(const std::string& path);
+
   void add_noise(const double obs_noise_sigma);
 
   void normalize(double new_scale);
@@ -216,9 +212,6 @@ class BalProblem {
 
   void postprocress(const BalDatasetOptions& options,
                     PipelineTimingSummary* timing_summary = nullptr);
-
-  void copy_to_camera_state(VecX& camera_state) const;
-  void copy_from_camera_state(const VecX& camera_state);
 
   void backup();
   void restore();
