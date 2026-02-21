@@ -54,7 +54,13 @@ void BalImageOverlay::update(pangolin::ImageView& view,
 
   // prepare storage
   const auto& lmdb = bal_problem.landmarks();
-  const auto& target_cam = bal_problem.cameras().at(frame_id);
+  TimeCamId tcid(frame_id, 0);
+  const auto& target_kf = bal_problem.keyframes().at(frame_id);
+  const auto& target_cam = bal_problem.calib().intrinsics.at(tcid.cam_id);
+
+  Sophus::SE3<Scalar> T_c_w =
+      (target_kf.T_w_i * bal_problem.calib().T_i_c.at(tcid.cam_id)).inverse();
+
   kpts_detected_.clear();
   kpts_projected_.clear();
   image_size_.setZero();
@@ -62,28 +68,28 @@ void BalImageOverlay::update(pangolin::ImageView& view,
 
   // compute projections and store observations
   for (const auto& lm : lmdb) {
-    auto obs_it = lm.obs.find(frame_id);
+    auto obs_it = lm.obs.find(tcid);
     if (obs_it == lm.obs.end()) {
       continue;
     }
 
     Vec2 obs_pos = obs_it->second.pos;
 
-    if (target_cam.intrinsics.getName() != "bal") {
-      obs_pos[0] -= target_cam.intrinsics.getParam()[2];
-      obs_pos[1] -= target_cam.intrinsics.getParam()[3];
+    if (target_cam.getName() != "bal") {
+      obs_pos[0] -= target_cam.getParam()[2];
+      obs_pos[1] -= target_cam.getParam()[3];
     }
 
     kpts_detected_.emplace_back(obs_pos.template cast<double>());
 
     // projected position
-    Vec4 p_cam = (target_cam.T_c_w * lm.p_w).homogeneous();
+    Vec4 p_cam = (T_c_w * lm.p_w).homogeneous();
     Vec2 p_proj;
-    target_cam.intrinsics.project(p_cam, p_proj);
+    target_cam.project(p_cam, p_proj);
 
-    if (target_cam.intrinsics.getName() != "bal") {
-      p_proj[0] -= target_cam.intrinsics.getParam()[2];
-      p_proj[1] -= target_cam.intrinsics.getParam()[3];
+    if (target_cam.getName() != "bal") {
+      p_proj[0] -= target_cam.getParam()[2];
+      p_proj[1] -= target_cam.getParam()[3];
     }
     kpts_projected_.emplace_back(p_proj.template cast<double>());
 
