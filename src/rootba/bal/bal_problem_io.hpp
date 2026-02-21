@@ -55,6 +55,11 @@ namespace cereal {
 // serializers?
 
 template <class Archive>
+void serialize(Archive& ar, rootba::TimeCamId& obj) {
+  ar(CEREAL_NVP_("frame_id", obj.frame_id), CEREAL_NVP_("cam_id", obj.cam_id));
+}
+
+template <class Archive>
 void serialize(Archive& ar,
                typename rootba::BalProblem<double>::Observation& obj) {
   ar(CEREAL_NVP_("pos", obj.pos));

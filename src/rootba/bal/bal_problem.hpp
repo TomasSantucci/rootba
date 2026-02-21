@@ -248,8 +248,13 @@ class BalProblem {
   BalProblem<Scalar2> copy_cast() const {
     BalProblem<Scalar2> res;
 
+    res.keyframes_.resize(this->keyframes_.size());
     res.cameras_.resize(this->cameras_.size());
     res.landmarks_.resize(this->landmarks_.size());
+
+    for (size_t i = 0; i < this->keyframes_.size(); i++) {
+      res.keyframes_[i] = this->keyframes_[i].template cast<Scalar2>();
+    }
 
     for (size_t i = 0; i < this->cameras_.size(); i++) {
       res.cameras_[i] = this->cameras_[i].template cast<Scalar2>();
