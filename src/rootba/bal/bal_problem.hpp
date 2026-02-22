@@ -201,6 +201,8 @@ class BalProblem {
 
   bool save_basalt(const std::string& path);
 
+  bool save_euroc(const std::string& path) const;
+
   void add_noise(const double obs_noise_sigma);
 
   void normalize(double new_scale);

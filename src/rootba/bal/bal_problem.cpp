@@ -362,6 +362,36 @@ bool BalProblem<Scalar>::save_basalt(const std::string& path) {
 }
 
 template <typename Scalar>
+bool BalProblem<Scalar>::save_euroc(const std::string& path) const {
+  // Save trajectory in euroc format:
+  // timestamp [ns],p_RS_R_x [m],p_RS_R_y [m],p_RS_R_z [m],q_RS_w [],q_RS_x
+  // [],q_RS_y [],q_RS_z []
+  std::ofstream file(path);
+  if (!file.is_open()) {
+    LOG(ERROR) << "Could not open file for writing: '" << path << "'";
+    return false;
+  }
+
+  file << "#timestamp [ns],p_RS_R_x [m],p_RS_R_y [m],p_RS_R_z [m],q_RS_w "
+          "[],q_RS_x [],q_RS_y [],q_RS_z []\n";
+
+  for (const auto& kf : keyframes_) {
+    auto q = kf.T_w_i.unit_quaternion();
+    auto t = kf.T_w_i.translation();
+    file << kf.t_ns << "," << t.x() << "," << t.y() << "," << t.z() << ","
+         << q.w() << "," << q.x() << "," << q.y() << "," << q.z() << "\n";
+  }
+
+  file.close();
+
+  if (!quiet_) {
+    LOG(INFO) << "Saved trajectory with " << num_keyframes() << " keyframes to "
+              << path;
+  }
+  return true;
+}
+
+template <typename Scalar>
 void BalProblem<Scalar>::add_noise(const double obs_noise_sigma) {
   CHECK_GE(obs_noise_sigma, 0.0);
 

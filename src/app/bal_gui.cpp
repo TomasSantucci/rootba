@@ -138,6 +138,11 @@ int main(int argc, char** argv) {
     std::string out = "output.json";
     bal_problem.save_basalt(out);
   });
+  Button save_euroc("ui.save_euroc", [&]() {
+    std::string out = "output.csv";
+    bal_problem.save_euroc(out);
+  });
+
   pangolin::Var<double> obs_noise_sigma("ui.obs_noise_sigma", 0, 0, 2);
   Button add_noise("ui.add_noise", [&]() {
     bal_problem.add_noise(obs_noise_sigma);
