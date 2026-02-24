@@ -87,7 +87,7 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::allocate_landmark(
 
 template <class T, typename Scalar, int POSE_SIZE>
 void LandmarkBlockBase<T, Scalar, POSE_SIZE>::linearize_landmark(
-    const LandmarkBlockBase::Cameras& cameras) {
+    const Keyframes& keyframes, const Calibration& calib) {
   ROOTBA_ASSERT(state_ == State::ALLOCATED ||
                 state_ == State::NUMERICAL_FAILURE ||
                 state_ == State::LINEARIZED || state_ == State::MARGINALIZED);
@@ -95,6 +95,7 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::linearize_landmark(
   const size_t lm_idx = static_cast<const T*>(this)->get_lm_idx();
   const size_t res_idx = static_cast<const T*>(this)->get_res_idx();
   const auto& pose_idx = static_cast<const T*>(this)->get_pose_idx();
+  const auto& obs_to_kf_idx = static_cast<const T*>(this)->get_obs_to_kf_idx();
   auto& storage = static_cast<T*>(this)->get_storage();
   storage.setZero();
 
@@ -103,25 +104,38 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::linearize_landmark(
 
   bool numerically_valid = true;
 
-  for (size_t i = 0; i < pose_idx.size(); i++) {
-    size_t cam_idx = pose_idx[i];
-    size_t obs_idx = i * 2;
-    size_t pose_idx = i * POSE_SIZE;
+  size_t obs_i = 0;
+  for (const auto& [tcid, obs] : lm_ptr_->obs) {
+    FrameIdx frame_idx = tcid.frame_id;
+    CamId cam_id = tcid.cam_id;
 
-    const auto& obs = lm_ptr_->obs.at(cam_idx);
-    const auto& cam = cameras.at(cam_idx);
+    size_t obs_idx = obs_i * 2;  // Row index for this observation's residual
+    size_t kf_col_idx = obs_to_kf_idx[obs_i];  // Column index in Jacobian
+    size_t pose_col_idx = kf_col_idx * POSE_SIZE;
 
-    typename BalBundleAdjustmentHelper<Scalar>::MatRP Jp;
+    const auto& keyframe = keyframes.at(frame_idx);
+    const auto& T_w_i = keyframe.T_w_i;  // IMU-to-world
+
+    // Get camera intrinsics and extrinsics from calibration
+    ROOTBA_ASSERT(cam_id < calib.T_i_c.size());
+    const auto& T_i_c = calib.T_i_c[cam_id];  // camera-to-IMU
+    const auto& cam_model = calib.intrinsics[cam_id];
+
+    // Compute transformation from world to camera frame
+    typename BalProblem<Scalar>::SE3 T_c_w = T_i_c.inverse() * T_w_i.inverse();
+
+    // Compute Jacobian w.r.t. camera pose and landmark
+    typename BalBundleAdjustmentHelper<Scalar>::MatRP Jp_cam;
     typename BalBundleAdjustmentHelper<Scalar>::MatRL Jl;
 
     Vec2 res;
     const bool valid = BalBundleAdjustmentHelper<Scalar>::linearize_point(
-        obs.pos, lm_ptr_->p_w, cam.T_c_w, cam.intrinsics, true, res, &Jp,
-        nullptr, &Jl);
+        obs.pos, lm_ptr_->p_w, T_c_w, cam_model, true, res, &Jp_cam, nullptr,
+        &Jl);
 
     if (!options_.use_valid_projections_only || valid) {
       numerically_valid = numerically_valid && Jl.array().isFinite().all() &&
-                          Jp.array().isFinite().all() &&
+                          Jp_cam.array().isFinite().all() &&
                           res.array().isFinite().all();
 
       const Scalar res_squared = res.squaredNorm();
@@ -130,10 +144,43 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::linearize_landmark(
               options_.residual_options, res_squared);
       const Scalar sqrt_weight = std::sqrt(weight);
 
-      storage.template block<2, 6>(obs_idx, pose_idx) = sqrt_weight * Jp;
+      /*
+        Chain rule to get Jacobian w.r.t. IMU pose
+        Perturbation model: T_w_i_new = T_w_i * exp(ξ_imu)
+        This affects camera pose: T_w_c_new = T_w_i * exp(ξ_imu) * T_i_c
+
+        Using adjoint property: T * exp(ξ) = exp(Ad(T) * ξ) * T
+        We get:
+        (1) T_w_i * exp(ξ_imu) * T_i_c =
+          T_w_i * T_i_c * exp(Ad(T_i_c^{-1}) * ξ_imu)
+        by eq. C:
+        (2) T_w_i * exp(ξ_imu) * T_i_c =
+          T_w_i * T_i_c * exp(Ad(T_i_c^{-1}) * ξ_imu)
+
+        T_w_c(e_cam) = T_w_c * exp(Ad(T_i_c^{-1}) * ξ_imu)
+
+        A. exp(Ad(T_i_c^{-1}) * ξ_imu) * T_i_c^{-1} = T_i_c^{-1} * exp(ξ_imu)
+        B. T_i_c * exp(Ad(T_i_c^{-1}) * ξ_imu) * T_i_c^{-1} = exp(ξ_imu)
+        C. exp(ξ_imu) = T_i_c * exp(Ad(T_i_c^{-1}) * ξ_imu) * T_i_c^{-1}
+
+        Therefore:
+          ξ_cam = Ad(T_i_c^{-1}) * ξ_imu
+          And: ∂r/∂ξ_imu = ∂r/∂ξ_cam * Ad(T_i_c^{-1}) = Jp_cam * Ad(T_i_c^{-1})
+      */
+
+      // If we use a left perturbation model, d_cam_d_imu would be id.
+      Mat66 Ad_T_i_c_inv = T_i_c.inverse().Adj();
+      Mat66 d_cam_d_imu = Ad_T_i_c_inv;
+      typename BalBundleAdjustmentHelper<Scalar>::MatRP Jp_imu =
+          Jp_cam * d_cam_d_imu;
+
+      storage.template block<2, 6>(obs_idx, pose_col_idx) =
+          sqrt_weight * Jp_imu;
       storage.template block<2, 3>(obs_idx, lm_idx) = sqrt_weight * Jl;
       storage.template block<2, 1>(obs_idx, res_idx) = sqrt_weight * res;
     }
+
+    obs_i++;
   }
 
   if (numerically_valid) {
@@ -216,14 +263,15 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::back_substitute(
   const size_t padding_idx = static_cast<T*>(this)->get_padding_idx();
   const size_t padding_size = static_cast<T*>(this)->get_padding_size();
   const size_t num_rows = static_cast<T*>(this)->get_num_rows();
-  const auto& pose_idx = static_cast<T*>(this)->get_pose_idx();
+  const auto& pose_idx =
+      static_cast<T*>(this)->get_pose_idx();  // Keyframe indices
   const auto& storage = static_cast<T*>(this)->get_storage();
 
   VecX pose_inc_reduced(padding_idx + padding_size);
   for (size_t i = 0; i < pose_idx.size(); i++) {
-    size_t cam_idx = pose_idx[i];
+    size_t kf_idx = pose_idx[i];  // This is now a keyframe index (FrameIdx)
     pose_inc_reduced.template segment<POSE_SIZE>(POSE_SIZE * i) =
-        pose_inc.template segment<POSE_SIZE>(POSE_SIZE * cam_idx);
+        pose_inc.template segment<POSE_SIZE>(POSE_SIZE * kf_idx);
   }
   pose_inc_reduced.tail(padding_size).setConstant(0);
 
@@ -306,12 +354,14 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_triplets_Q2TJp(
     size_t row_offset, std::vector<Eigen::Triplet<Scalar>>& triplets) const {
   ROOTBA_ASSERT(state_ == State::MARGINALIZED);
 
-  const auto& pose_idx = static_cast<const T*>(this)->get_pose_idx();
+  const auto& pose_idx =
+      static_cast<const T*>(this)->get_pose_idx();  // Keyframe indices
   const auto& storage = static_cast<const T*>(this)->get_storage();
 
   // TODO: check if it makes a difference if we order the triples by rows
   for (size_t i = 0; i < pose_idx.size(); ++i) {
-    size_t col_offset = pose_idx[i] * POSE_SIZE;
+    size_t kf_idx = pose_idx[i];  // Keyframe index
+    size_t col_offset = kf_idx * POSE_SIZE;
     add_triplets_dense(
         storage.block(3, i * POSE_SIZE, num_Q2T_rows(), POSE_SIZE), row_offset,
         col_offset, triplets);
@@ -326,15 +376,16 @@ LandmarkBlockBase<T, Scalar, POSE_SIZE>::get_Q1TJp_postmult_x(
 
   const size_t padding_idx = static_cast<const T*>(this)->get_padding_idx();
   const size_t padding_size = static_cast<const T*>(this)->get_padding_size();
-  const auto& pose_idx = static_cast<const T*>(this)->get_pose_idx();
+  const auto& pose_idx =
+      static_cast<const T*>(this)->get_pose_idx();  // Keyframe indices
   const auto& storage = static_cast<const T*>(this)->get_storage();
 
   VecX x_pose_reduced(padding_idx + padding_size);
 
   for (size_t i = 0; i < pose_idx.size(); i++) {
-    size_t cam_idx = pose_idx[i];
+    size_t kf_idx = pose_idx[i];  // Keyframe index
     x_pose_reduced.template segment<POSE_SIZE>(POSE_SIZE * i) =
-        x_pose.template segment<POSE_SIZE>(POSE_SIZE * cam_idx);
+        x_pose.template segment<POSE_SIZE>(POSE_SIZE * kf_idx);
   }
   x_pose_reduced.tail(padding_size).setConstant(0);
 
@@ -353,15 +404,16 @@ LandmarkBlockBase<T, Scalar, POSE_SIZE>::get_Q2TJp_postmult_x(
   const size_t padding_idx = static_cast<const T*>(this)->get_padding_idx();
   const size_t padding_size = static_cast<const T*>(this)->get_padding_size();
   const size_t num_rows = static_cast<const T*>(this)->get_num_rows();
-  const auto& pose_idx = static_cast<const T*>(this)->get_pose_idx();
+  const auto& pose_idx =
+      static_cast<const T*>(this)->get_pose_idx();  // Keyframe indices
   const auto& storage = static_cast<const T*>(this)->get_storage();
 
   VecX x_pose_reduced(padding_idx + padding_size);
 
   for (size_t i = 0; i < pose_idx.size(); i++) {
-    size_t cam_idx = pose_idx[i];
+    size_t kf_idx = pose_idx[i];  // Keyframe index
     x_pose_reduced.template segment<POSE_SIZE>(POSE_SIZE * i) =
-        x_pose.template segment<POSE_SIZE>(POSE_SIZE * cam_idx);
+        x_pose.template segment<POSE_SIZE>(POSE_SIZE * kf_idx);
   }
   x_pose_reduced.tail(padding_size).setConstant(0);
 
@@ -380,7 +432,8 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_Q2TJp_premult_x(
   const size_t padding_idx = static_cast<const T*>(this)->get_padding_idx();
   const size_t padding_size = static_cast<const T*>(this)->get_padding_size();
   const size_t num_rows = static_cast<const T*>(this)->get_num_rows();
-  const auto& pose_idx = static_cast<const T*>(this)->get_pose_idx();
+  const auto& pose_idx =
+      static_cast<const T*>(this)->get_pose_idx();  // Keyframe indices
   const auto& storage = static_cast<const T*>(this)->get_storage();
 
   VecX res_reduced =
@@ -388,8 +441,8 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_Q2TJp_premult_x(
       storage.bottomLeftCorner(num_rows - 3, padding_idx + padding_size);
 
   for (size_t i = 0; i < pose_idx.size(); i++) {
-    size_t cam_idx = pose_idx[i];
-    res.template segment<POSE_SIZE>(POSE_SIZE * cam_idx) +=
+    size_t kf_idx = pose_idx[i];  // Keyframe index
+    res.template segment<POSE_SIZE>(POSE_SIZE * kf_idx) +=
         res_reduced.template segment<POSE_SIZE>(POSE_SIZE * i);
   }
 }
@@ -404,15 +457,16 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_Q2TJp_T_Q2TJp_mult_x(
   const size_t padding_idx = static_cast<const T*>(this)->get_padding_idx();
   const size_t padding_size = static_cast<const T*>(this)->get_padding_size();
   const size_t num_rows = static_cast<const T*>(this)->get_num_rows();
-  const auto& pose_idx = static_cast<const T*>(this)->get_pose_idx();
+  const auto& pose_idx =
+      static_cast<const T*>(this)->get_pose_idx();  // Keyframe indices
   const auto& storage = static_cast<const T*>(this)->get_storage();
 
   VecX x_pose_reduced(padding_idx + padding_size);
 
   for (size_t i = 0; i < pose_idx.size(); i++) {
-    size_t cam_idx = pose_idx[i];
+    size_t kf_idx = pose_idx[i];  // Keyframe index
     x_pose_reduced.template segment<POSE_SIZE>(POSE_SIZE * i) =
-        x_pose.template segment<POSE_SIZE>(POSE_SIZE * cam_idx);
+        x_pose.template segment<POSE_SIZE>(POSE_SIZE * kf_idx);
   }
   x_pose_reduced.tail(padding_size).setConstant(0);
 
@@ -423,15 +477,15 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_Q2TJp_T_Q2TJp_mult_x(
   x_pose_reduced.noalias() = block.adjoint() * tmp;
 
   for (size_t i = 0; i < pose_idx.size(); i++) {
-    size_t cam_idx = pose_idx[i];
+    size_t kf_idx = pose_idx[i];  // Keyframe index
 
     if (pose_mutex == nullptr) {
-      res.template segment<POSE_SIZE>(POSE_SIZE * cam_idx) +=
+      res.template segment<POSE_SIZE>(POSE_SIZE * kf_idx) +=
           x_pose_reduced.template segment<POSE_SIZE>(POSE_SIZE * i);
     } else {
-      std::scoped_lock lock(pose_mutex->at(cam_idx));
+      std::scoped_lock lock(pose_mutex->at(kf_idx));
 
-      res.template segment<POSE_SIZE>(POSE_SIZE * cam_idx) +=
+      res.template segment<POSE_SIZE>(POSE_SIZE * kf_idx) +=
           x_pose_reduced.template segment<POSE_SIZE>(POSE_SIZE * i);
     }
   }
@@ -456,8 +510,8 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_Q2TJp_T_Q2Tr(
   // (Q2^T * Jp)^T * Q2^Tr
 
   for (size_t i = 0; i < pose_idx.size(); i++) {
-    size_t cam_idx = pose_idx[i];
-    res.template segment<POSE_SIZE>(POSE_SIZE * cam_idx) +=
+    size_t kf_idx = pose_idx[i];  // Keyframe index
+    res.template segment<POSE_SIZE>(POSE_SIZE * kf_idx) +=
         x_pose_reduced.template segment<POSE_SIZE>(POSE_SIZE * i);
   }
 }
@@ -481,8 +535,8 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_Q2TJp_diag2(
           .squaredNorm();
 
   for (size_t i = 0; i < pose_idx.size(); i++) {
-    size_t cam_idx = pose_idx[i];
-    res.template segment<POSE_SIZE>(POSE_SIZE * cam_idx) +=
+    size_t kf_idx = pose_idx[i];  // Keyframe index
+    res.template segment<POSE_SIZE>(POSE_SIZE * kf_idx) +=
         res_reduced.template segment<POSE_SIZE>(POSE_SIZE * i);
   }
 }
@@ -498,9 +552,6 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_Jp_diag2(
   const auto& pose_idx = static_cast<const T*>(this)->get_pose_idx();
   const auto& storage = static_cast<const T*>(this)->get_storage();
 
-  // TODO: we know that every column has only 2 non-zero rows, so maybe we
-  // should limit computation to those...
-
   // exclude landmark damping rows (but they'd be 0 anyway)
   VecX res_reduced =
       storage.topLeftCorner(num_rows - 3, padding_idx + padding_size)
@@ -508,8 +559,8 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_Jp_diag2(
           .squaredNorm();
 
   for (size_t i = 0; i < pose_idx.size(); i++) {
-    size_t cam_idx = pose_idx[i];
-    res.template segment<POSE_SIZE>(POSE_SIZE * cam_idx) +=
+    size_t kf_idx = pose_idx[i];  // Keyframe index
+    res.template segment<POSE_SIZE>(POSE_SIZE * kf_idx) +=
         res_reduced.template segment<POSE_SIZE>(POSE_SIZE * i);
   }
 }
@@ -531,19 +582,19 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_Q2TJp_T_Q2TJp_blockdiag(
       const auto Q2T_Jp =
           storage.block(3, POSE_SIZE * i, num_rows - 3, POSE_SIZE);
 
-      const size_t cam_idx = pose_idx[i];
+      const size_t kf_idx = pose_idx[i];  // Keyframe index
       {
         MatX tmp = Q2T_Jp.transpose() * Q2T_Jp;
-        std::scoped_lock lock(pose_mutex->at(cam_idx));
-        accu.add(cam_idx, std::move(tmp));
+        std::scoped_lock lock(pose_mutex->at(kf_idx));
+        accu.add(kf_idx, std::move(tmp));
       }
     }
   } else {
     for (size_t i = 0; i < pose_idx.size(); i++) {
       // using auto gives us a "reference" to the block
       auto Q2T_Jp = storage.block(3, POSE_SIZE * i, num_rows - 3, POSE_SIZE);
-      const size_t cam_idx = pose_idx[i];
-      accu.add(cam_idx, Q2T_Jp.transpose() * Q2T_Jp);
+      const size_t kf_idx = pose_idx[i];  // Keyframe index
+      accu.add(kf_idx, Q2T_Jp.transpose() * Q2T_Jp);
     }
   }
 }
@@ -553,15 +604,19 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::add_Jp_T_Jp_blockdiag(
     BlockDiagonalAccumulator<Scalar>& accu) const {
   ROOTBA_ASSERT(state_ == State::LINEARIZED);
 
-  const auto& pose_idx = static_cast<const T*>(this)->get_pose_idx();
+  const auto& pose_idx =
+      static_cast<const T*>(this)->get_pose_idx();  // Keyframe indices
+  const auto& obs_to_kf_idx = static_cast<const T*>(this)->get_obs_to_kf_idx();
   const auto& storage = static_cast<const T*>(this)->get_storage();
 
-  for (size_t i = 0; i < pose_idx.size(); i++) {
-    // using auto gives us a "reference" to the block
-    auto Jp = storage.block(2 * i, POSE_SIZE * i, 2, POSE_SIZE);
+  // Iterate over observations and accumulate to corresponding keyframes
+  for (size_t obs_i = 0; obs_i < obs_to_kf_idx.size(); obs_i++) {
+    size_t kf_col_idx = obs_to_kf_idx[obs_i];  // Column index in Jacobian
+    size_t kf_idx = pose_idx[kf_col_idx];      // Actual keyframe index
 
-    size_t cam_idx = pose_idx[i];
-    accu.add(cam_idx, Jp.transpose() * Jp);
+    // Extract Jacobian for this observation (2 rows)
+    auto Jp = storage.block(2 * obs_i, POSE_SIZE * kf_col_idx, 2, POSE_SIZE);
+    accu.add(kf_idx, Jp.transpose() * Jp);
   }
 }
 
@@ -600,9 +655,9 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::scale_Jp_cols(
   VecX jacobian_scaling_reduced(padding_idx + padding_size);
 
   for (size_t i = 0; i < pose_idx.size(); i++) {
-    size_t cam_idx = pose_idx[i];
+    size_t kf_idx = pose_idx[i];  // Keyframe index
     jacobian_scaling_reduced.template segment<POSE_SIZE>(POSE_SIZE * i) =
-        jacobian_scaling.template segment<POSE_SIZE>(POSE_SIZE * cam_idx);
+        jacobian_scaling.template segment<POSE_SIZE>(POSE_SIZE * kf_idx);
   }
   jacobian_scaling_reduced.tail(padding_size).setConstant(0);
 

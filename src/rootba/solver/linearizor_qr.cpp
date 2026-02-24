@@ -203,7 +203,7 @@ typename LinearizorQR<Scalar_>::VecX LinearizorQR<Scalar_>::solve(
   std::unique_ptr<Preconditioner<Scalar>> precond;
   {
     Timer timer;
-    const int num_cams = bal_problem_.num_cameras();
+    const int num_cams = bal_problem_.num_keyframes();
     const int pose_size = lqr_->POSE_SIZE;
     if (options_.preconditioner_type ==
         SolverOptions::PreconditionerType::JACOBI) {
@@ -280,8 +280,8 @@ Scalar_ LinearizorQR<Scalar_>::apply(VecX&& inc) {
   inc.array() *= pose_jacobian_scaling_.array();
 
   // update cameras
-  for (size_t i = 0; i < bal_problem_.cameras().size(); i++) {
-    bal_problem_.cameras()[i].apply_inc_pose(inc.template segment<6>(i * 6));
+  for (size_t i = 0; i < bal_problem_.keyframes().size(); i++) {
+    bal_problem_.keyframes()[i].apply_inc_pose(inc.template segment<6>(i * 6));
   }
   IF_SET(it_summary_)->update_cameras_time_in_seconds = timer.elapsed();
 

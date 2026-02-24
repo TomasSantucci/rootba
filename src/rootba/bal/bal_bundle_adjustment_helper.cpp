@@ -73,6 +73,9 @@ void BalBundleAdjustmentHelper<Scalar>::compute_error(
     ResidualInfo& error) {
   const bool ignore_validity_check = !options.use_projection_validity_check();
 
+  const auto& keyframes = bal_problem.keyframes();
+  const auto& calib = bal_problem.calib();
+
   // body for parallel reduce
   auto body = [&](const tbb::blocked_range<int>& range,
                   ResidualInfoAccu error_accu) {
@@ -80,13 +83,22 @@ void BalBundleAdjustmentHelper<Scalar>::compute_error(
       const int lm_id = r;
       const auto& lm = bal_problem.landmarks().at(lm_id);
 
-      for (const auto& [frame_id, obs] : lm.obs) {
-        const auto& cam = bal_problem.cameras().at(frame_id);
+      for (const auto& [tcid, obs] : lm.obs) {
+        FrameIdx frame_idx = tcid.frame_id;
+        CamId cam_id = tcid.cam_id;
+
+        const auto& keyframe = keyframes.at(frame_idx);
+        const auto& T_w_i = keyframe.T_w_i;
+
+        const auto& T_i_c = calib.T_i_c[cam_id];
+        const auto& cam_model = calib.intrinsics[cam_id];
+
+        // Compute transformation from world to camera frame
+        typename BalProblem<Scalar>::SE3 T_c_w = (T_w_i * T_i_c).inverse();
 
         VecR res;
-        const bool projection_valid =
-            linearize_point(obs.pos, lm.p_w, cam.T_c_w, cam.intrinsics,
-                            ignore_validity_check, res);
+        const bool projection_valid = linearize_point(
+            obs.pos, lm.p_w, T_c_w, cam_model, ignore_validity_check, res);
 
         const bool numerically_valid = res.array().isFinite().all();
 
