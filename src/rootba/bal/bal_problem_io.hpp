@@ -66,9 +66,9 @@ void serialize(Archive& ar,
 }
 
 template <class Archive>
-void serialize(Archive& ar, typename rootba::BalProblem<double>::Camera& obj) {
-  ar(CEREAL_NVP_("T_c_w", obj.T_c_w),
-     CEREAL_NVP_("intrinsics", obj.intrinsics));
+void serialize(Archive& ar,
+               typename rootba::BalProblem<double>::Keyframe& obj) {
+  ar(CEREAL_NVP_("T_c_w", obj.T_i_w), CEREAL_NVP_("t_ns", obj.t_ns));
   // NOTE: we don't serialize the 'backup' variables
 }
 
@@ -81,7 +81,7 @@ void serialize(Archive& ar,
 
 template <class Archive, class Scalar>
 void serialize(Archive& ar, rootba::BalProblem<Scalar>& obj) {
-  ar(make_nvp("cameras", obj.cameras()),
+  ar(make_nvp("keyframes", obj.keyframes()),
      make_nvp("landmarks", obj.landmarks()));
 }
 

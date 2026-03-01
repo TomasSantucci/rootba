@@ -300,8 +300,6 @@ void BalProblem<Scalar>::load_basalt(const std::string& path_str) {
 
 template <typename Scalar>
 bool BalProblem<Scalar>::save_basalt(const std::string& path) {
-  using Vec3 = Eigen::Matrix<Scalar, 3, 1>;
-
   nlohmann::json j;
 
   // Save keyframes
@@ -539,20 +537,7 @@ void BalProblem<Scalar>::perturb(double rotation_sigma,
                 static_cast<std::default_random_engine::result_type>(seed)};
 
   if (rotation_sigma > 0 || translation_sigma > 0) {
-    for (auto& cam : cameras_) {
-      // perturb camera center in world coordinates
-      if (translation_sigma > 0) {
-        SE3 T_w_c = cam.T_c_w.inverse();
-        T_w_c.translation() += perturbation<Scalar, 3>(translation_sigma, eng);
-        cam.T_c_w = T_w_c.inverse();
-      }
-      // local rotation perturbation in camera frame
-      if (rotation_sigma > 0) {
-        cam.T_c_w.so3() =
-            SO3::exp(perturbation<Scalar, 3>(rotation_sigma, eng)) *
-            cam.T_c_w.so3();
-      }
-    }
+    // TODO@tsantucci: implement keyframe perturbation
   }
 
   // perturb landmarks
@@ -579,9 +564,6 @@ void BalProblem<Scalar>::postprocress(const BalDatasetOptions& options,
 
 template <typename Scalar>
 void BalProblem<Scalar>::backup() {
-  for (auto& cam : cameras_) {
-    cam.backup();
-  }
   for (auto& lm : landmarks_) {
     lm.backup();
   }
@@ -592,9 +574,6 @@ void BalProblem<Scalar>::backup() {
 
 template <typename Scalar>
 void BalProblem<Scalar>::restore() {
-  for (auto& cam : cameras_) {
-    cam.restore();
-  }
   for (auto& lm : landmarks_) {
     lm.restore();
   }
@@ -719,7 +698,7 @@ template <class Scalar>
 void BalProblem<Scalar>::summarize_problem(DatasetSummary& summary,
                                            bool compute_sparsity) const {
   summary.type = "bal";
-  summary.num_cameras = num_cameras();
+  summary.num_keyframes = num_keyframes();
   summary.num_landmarks = num_landmarks();
   summary.num_observations = num_observations();
 
@@ -765,9 +744,9 @@ std::string BalProblem<Scalar>::stats_to_string() const {
   DatasetSummary summary;
   summarize_problem(summary, false);
 
-  return "BAL problem stats: {} cams, {} lms, {} obs, per-lm-obs: "
+  return "BAL problem stats: {} keyframes, {} lms, {} obs, per-lm-obs: "
          "{:.1f}+-{:.1f}/{}/{}"
-         ""_format(num_cameras(), num_landmarks(), num_observations(),
+         ""_format(num_keyframes(), num_landmarks(), num_observations(),
                    summary.per_lm_obs.mean, summary.per_lm_obs.stddev,
                    int(summary.per_lm_obs.min), int(summary.per_lm_obs.max));
 }

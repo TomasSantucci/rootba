@@ -130,8 +130,7 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::linearize_landmark(
 
     Vec2 res;
     const bool valid = BalBundleAdjustmentHelper<Scalar>::linearize_point(
-        obs.pos, lm_ptr_->p_w, T_c_w, cam_model, true, res, &Jp_cam, nullptr,
-        &Jl);
+        obs.pos, lm_ptr_->p_w, T_c_w, cam_model, true, res, &Jp_cam, &Jl);
 
     if (!options_.use_valid_projections_only || valid) {
       numerically_valid = numerically_valid && Jl.array().isFinite().all() &&

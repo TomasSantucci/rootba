@@ -126,17 +126,17 @@ template <typename Scalar>
 bool BalBundleAdjustmentHelper<Scalar>::linearize_point(
     const Vec2& obs, const Vec3& lm_p_w, const SE3& T_c_w,
     const basalt::GenericCamera<Scalar>& intr, const bool ignore_validity_check,
-    VecR& res, MatRP* d_res_d_xi, MatRI* d_res_d_i, MatRL* d_res_d_l) {
+    VecR& res, MatRP* d_res_d_xi, MatRL* d_res_d_l) {
   Mat4 T_c_w_mat = T_c_w.matrix();
 
   Vec4 p_c_3d = T_c_w_mat * lm_p_w.homogeneous();
 
   Mat24 d_res_d_p;
   bool projection_valid;
-  if (d_res_d_xi || d_res_d_i || d_res_d_l) {
-    projection_valid = intr.project(p_c_3d, res, &d_res_d_p, nullptr);
+  if (d_res_d_xi || d_res_d_l) {
+    projection_valid = intr.project(p_c_3d, res, &d_res_d_p);
   } else {
-    projection_valid = intr.project(p_c_3d, res, nullptr, nullptr);
+    projection_valid = intr.project(p_c_3d, res, nullptr);
   }
   res -= obs;
 

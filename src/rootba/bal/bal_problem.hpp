@@ -71,73 +71,8 @@ class BalProblem {
   using SE3 = Sophus::SE3<Scalar>;
   using SO3 = Sophus::SO3<Scalar>;
 
-  // Only used when the map is loaded using load_bal or load_bundler, which are
-  // hardcoded for bal cameras.
-  static constexpr int CAM_STATE_SIZE = 10;
-
-  // Generic camera wrapper to support multiple intrinsic models.
-  using CameraModel = basalt::GenericCamera<Scalar>;
-
   struct Observation {
     Vec2 pos = Vec2::Zero();
-  };
-
-  struct Camera {
-    SE3 T_c_w;               // world-to-cam pose
-    CameraModel intrinsics;  // per-camera intrinsics
-
-    VecX params() const {
-      const int intrinsics_size = intrinsics.getN();
-      VecX p(7 + intrinsics_size);
-      p.template head<7>() = T_c_w.params();
-      p.tail(intrinsics_size) = intrinsics.getParam();
-      return p;
-    }
-
-    void from_params(const VecX& p) {
-      CHECK_GE(p.size(), 7);
-      const int intrinsics_size = p.size() - 7;
-      T_c_w = Eigen::Map<const SE3>(p.data());
-
-      // Ensure the stored model matches the provided parameter size.
-      CHECK_EQ(intrinsics.getN(), intrinsics_size)
-          << "Camera intrinsics size mismatch; model needs reinitialization";
-      intrinsics.setParams(p.tail(intrinsics_size));
-    }
-
-    void apply_inc_pose(const Vec6& inc) { inc_pose(inc, T_c_w); }
-
-    inline static void inc_pose(const Vec6& inc, SE3& T_c_w) {
-      T_c_w = Sophus::se3_expd(inc) * T_c_w;
-    }
-
-    template <class Derived>
-    void apply_inc_intrinsics(const Eigen::MatrixBase<Derived>& inc) {
-      intrinsics.applyInc(inc);
-    }
-
-    void backup() {
-      T_c_w_backup_ = T_c_w;
-      intrinsics_backup_ = intrinsics;
-    }
-
-    void restore() {
-      T_c_w = T_c_w_backup_;
-      intrinsics = intrinsics_backup_;
-    }
-
-    template <typename Scalar2>
-    typename BalProblem<Scalar2>::Camera cast() const {
-      typename BalProblem<Scalar2>::Camera res;
-      res.T_c_w = T_c_w.template cast<Scalar2>();
-      res.intrinsics = intrinsics.template cast<Scalar2>();
-
-      return res;
-    }
-
-   private:
-    SE3 T_c_w_backup_;
-    CameraModel intrinsics_backup_;
   };
 
   struct Landmark {
@@ -164,7 +99,6 @@ class BalProblem {
     Vec3 p_w_backup_;
   };
 
-  using Cameras = std::vector<Camera>;
   // Keyframe represents a rig (set of cameras with fixed relative transforms)
   struct Keyframe {
     // TODO@tsantucci: rename to something like Rig or Pose
@@ -221,17 +155,13 @@ class BalProblem {
   void backup();
   void restore();
 
-  inline const Cameras& cameras() const { return cameras_; }
-
   inline const Landmarks& landmarks() const { return landmarks_; }
   inline const Keyframes& keyframes() const { return keyframes_; }
   inline const Calibration& calib() const { return calib_; }
 
-  inline Cameras& cameras() { return cameras_; }
   inline Landmarks& landmarks() { return landmarks_; }
   inline Keyframes& keyframes() { return keyframes_; }
 
-  inline int num_cameras() const { return signed_cast(cameras_.size()); }
   inline int num_landmarks() const { return signed_cast(landmarks_.size()); }
   inline int num_keyframes() const { return signed_cast(keyframes_.size()); }
   int num_observations() const;
@@ -246,15 +176,10 @@ class BalProblem {
     BalProblem<Scalar2> res;
 
     res.keyframes_.resize(this->keyframes_.size());
-    res.cameras_.resize(this->cameras_.size());
     res.landmarks_.resize(this->landmarks_.size());
 
     for (size_t i = 0; i < this->keyframes_.size(); i++) {
       res.keyframes_[i] = this->keyframes_[i].template cast<Scalar2>();
-    }
-
-    for (size_t i = 0; i < this->cameras_.size(); i++) {
-      res.cameras_[i] = this->cameras_[i].template cast<Scalar2>();
     }
 
     for (size_t i = 0; i < this->landmarks_.size(); i++) {
@@ -276,14 +201,10 @@ class BalProblem {
   template <typename T>
   friend class BalProblem;
 
-  Cameras cameras_;
   Landmarks landmarks_;
   Keyframes keyframes_;
 
   Calibration calib_;
-
-  std::unordered_map<size_t, size_t> sequential_colmap_id_to_basalt_id;
-  std::unordered_map<size_t, size_t> image_id_to_cam_id;
 
   /// quiet means no INFO level log output
   bool quiet_ = false;

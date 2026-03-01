@@ -61,9 +61,7 @@ class LandmarkBlockBase : public LandmarkBlock<Scalar> {
       Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
   using Landmark = typename BalProblem<Scalar>::Landmark;
-  using Camera = typename BalProblem<Scalar>::Camera;
   using Landmarks = typename BalProblem<Scalar>::Landmarks;
-  using Cameras = typename BalProblem<Scalar>::Cameras;
   using Keyframe = typename BalProblem<Scalar>::Keyframe;
   using Keyframes = typename BalProblem<Scalar>::Keyframes;
   using Calibration = typename BalProblem<Scalar>::Calibration;

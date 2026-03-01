@@ -88,9 +88,7 @@ class LandmarkBlock {
   using RowMat3 = Eigen::Matrix<Scalar, 3, 3, Eigen::RowMajor>;
 
   using Landmark = typename BalProblem<Scalar>::Landmark;
-  using Camera = typename BalProblem<Scalar>::Camera;
   using Landmarks = typename BalProblem<Scalar>::Landmarks;
-  using Cameras = typename BalProblem<Scalar>::Cameras;
   using Keyframe = typename BalProblem<Scalar>::Keyframe;
   using Keyframes = typename BalProblem<Scalar>::Keyframes;
   using Calibration = typename BalProblem<Scalar>::Calibration;
