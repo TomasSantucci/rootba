@@ -168,26 +168,27 @@ class BalProblem {
   // Keyframe represents a rig (set of cameras with fixed relative transforms)
   struct Keyframe {
     // TODO@tsantucci: rename to something like Rig or Pose
-    SE3 T_w_i;  // IMU pose (world-to-IMU transformation)
+    SE3 T_i_w;
     size_t t_ns;
 
-    void backup() { T_w_i_backup_ = T_w_i; }
+    void backup() { T_i_w_backup_ = T_i_w; }
 
-    void restore() { T_w_i = T_w_i_backup_; }
+    void restore() { T_i_w = T_i_w_backup_; }
 
     void apply_inc_pose(const Vec6& inc) {
-      T_w_i = Sophus::se3_expd(inc) * T_w_i;
+      T_i_w = Sophus::se3_expd(inc) * T_i_w;
     }
 
     template <typename Scalar2>
     typename BalProblem<Scalar2>::Keyframe cast() const {
       typename BalProblem<Scalar2>::Keyframe res;
-      res.T_w_i = T_w_i.template cast<Scalar2>();
+      res.T_i_w = T_i_w.template cast<Scalar2>();
+      res.t_ns = t_ns;
       return res;
     }
 
    private:
-    SE3 T_w_i_backup_;
+    SE3 T_i_w_backup_;
   };
 
   using Landmarks = std::vector<Landmark>;
@@ -202,6 +203,8 @@ class BalProblem {
   bool save_basalt(const std::string& path);
 
   bool save_euroc(const std::string& path) const;
+
+  void load_calibration(const std::string& path);
 
   void add_noise(const double obs_noise_sigma);
 
@@ -219,7 +222,6 @@ class BalProblem {
   void restore();
 
   inline const Cameras& cameras() const { return cameras_; }
-  void set_calibration(Calibration& calib) { calib_ = calib; };
 
   inline const Landmarks& landmarks() const { return landmarks_; }
   inline const Keyframes& keyframes() const { return keyframes_; }
@@ -258,6 +260,8 @@ class BalProblem {
     for (size_t i = 0; i < this->landmarks_.size(); i++) {
       res.landmarks_[i] = this->landmarks_[i].template cast<Scalar2>();
     }
+
+    res.calib_ = this->calib_.template cast<Scalar2>();
 
     res.quiet_ = quiet_;
 

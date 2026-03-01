@@ -73,6 +73,8 @@ int main(int argc, char** argv) {
     bundle_adjust_manual(bal_problem, options.solver, &summary.solver,
                          &summary.timing);
 
+    bal_problem.save_euroc(options.dataset.output_optimized_path);
+
     // postprocess
     bal_problem.postprocress(options.dataset, &summary.timing);
 #else
@@ -87,6 +89,8 @@ int main(int argc, char** argv) {
     // run solver
     bundle_adjust_manual(bal_problem, options.solver, &summary.solver,
                          &summary.timing);
+
+    bal_problem.save_euroc(options.dataset.output_optimized_path);
 
     // postprocess
     bal_problem.postprocress(options.dataset, &summary.timing);

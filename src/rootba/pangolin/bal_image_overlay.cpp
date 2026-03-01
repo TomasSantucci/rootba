@@ -68,9 +68,9 @@ void BalImageOverlay::update(pangolin::ImageView& view,
   for (size_t cam_id = 0; cam_id < calib.intrinsics.size(); ++cam_id) {
     TimeCamId tcid(frame_id, cam_id);
     const auto& target_cam = calib.intrinsics.at(cam_id);
-    const Sophus::SE3<Scalar>& T_i_c = calib.T_i_c.at(cam_id);
+    const Sophus::SE3<Scalar>& T_c_i = calib.T_i_c.at(cam_id).inverse();
 
-    Sophus::SE3<Scalar> T_c_w = (target_kf.T_w_i * T_i_c).inverse();
+    Sophus::SE3<Scalar> T_c_w = T_c_i * target_kf.T_i_w;
 
     Vec2d image_size = Vec2d(1, 1);
     std::vector<Vec2d> detected;

@@ -43,6 +43,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <utility>
 
 #include <absl/container/flat_hash_set.h>
+#include <basalt/serialization/headers_serialization.h>
 #include <cereal/archives/binary.hpp>
 #include <glog/logging.h>
 #include <nlohmann/json.hpp>
@@ -240,7 +241,7 @@ void BalProblem<Scalar>::load_basalt(const std::string& path_str) {
              static_cast<Scalar>(T_w_i_data[5]),
              static_cast<Scalar>(T_w_i_data[6]));
 
-      keyframes_[idx].T_w_i = SE3(q, t);
+      keyframes_[idx].T_i_w = SE3(q, t).inverse();
       keyframes_[idx].t_ns = id;
       idx++;
     }
@@ -310,8 +311,10 @@ bool BalProblem<Scalar>::save_basalt(const std::string& path) {
     nlohmann::json kf_json;
     kf_json["id"] = kf.t_ns;
 
-    auto q = kf.T_w_i.unit_quaternion();
-    auto t = kf.T_w_i.translation();
+    SE3 T_w_i = kf.T_i_w.inverse();
+
+    auto q = T_w_i.unit_quaternion();
+    auto t = T_w_i.translation();
 
     kf_json["T_w_i"] = {q.w(), q.x(), q.y(), q.z(), t.x(), t.y(), t.z()};
 
@@ -376,8 +379,9 @@ bool BalProblem<Scalar>::save_euroc(const std::string& path) const {
           "[],q_RS_x [],q_RS_y [],q_RS_z []\n";
 
   for (const auto& kf : keyframes_) {
-    auto q = kf.T_w_i.unit_quaternion();
-    auto t = kf.T_w_i.translation();
+    SE3 T_w_i = kf.T_i_w.inverse();
+    auto q = T_w_i.unit_quaternion();
+    auto t = T_w_i.translation();
     file << kf.t_ns << "," << t.x() << "," << t.y() << "," << t.z() << ","
          << q.w() << "," << q.x() << "," << q.y() << "," << q.z() << "\n";
   }
@@ -389,6 +393,24 @@ bool BalProblem<Scalar>::save_euroc(const std::string& path) const {
               << path;
   }
   return true;
+}
+
+template <typename Scalar>
+void BalProblem<Scalar>::load_calibration(const std::string& path) {
+  basalt::Calibration<double> calib;
+
+  CHECK(!path.empty()) << "Calibration path is empty";
+
+  std::ifstream calib_file(path);
+  CHECK(calib_file.is_open()) << "Could not open calibration file: " << path
+                              << " (cwd: " << std::filesystem::current_path()
+                              << ", errno: " << std::strerror(errno) << ")";
+
+  cereal::JSONInputArchive archive(calib_file);
+  archive(calib);
+  LOG(INFO) << "Loaded calibration from file: " << path;
+
+  calib_ = calib.template cast<Scalar>();
 }
 
 template <typename Scalar>
@@ -449,7 +471,7 @@ void BalProblem<Scalar>::normalize(const double new_scale) {
 
   // update keyframes: center = scale * (center - median)
   for (auto& kf : keyframes_) {
-    kf.T_w_i.translation() = scale * (kf.T_w_i.translation() - median);
+    kf.T_i_w.translation() = scale * (kf.T_i_w.translation() - median);
   }
 }
 
@@ -471,8 +493,8 @@ void BalProblem<Scalar>::filter_obs(const double threshold) {
     for (auto it = lm.obs.cbegin(); it != lm.obs.cend();) {
       TimeCamId tcid = it->first;
       const auto& kf = keyframes_.at(tcid.frame_id);
-      SE3 T_w_c = kf.T_w_i * calib_.T_i_c[tcid.cam_id];
-      Vec3 p3d_cam = T_w_c.inverse() * lm.p_w;
+      SE3 T_c_w = calib_.T_i_c[tcid.cam_id].inverse() * kf.T_i_w;
+      Vec3 p3d_cam = T_c_w * lm.p_w;
 
       if (p3d_cam.z() < threshold) {
         it = lm.obs.erase(it);
@@ -775,6 +797,7 @@ BalProblem<Scalar> load_normalized_bal_problem(
   BalProblem<double> bal_problem;
   bal_problem.set_quiet(options.quiet);
   bal_problem.load_basalt(options.input);
+  bal_problem.load_calibration(options.calibration_file);
 
   const double time_load = timer.reset();
 

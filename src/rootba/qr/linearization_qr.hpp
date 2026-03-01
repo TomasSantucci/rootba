@@ -146,8 +146,6 @@ class LinearizationQR : public LinearOperator<Scalar_> {
   bool has_pose_damping() const { return pose_damping_diagonal_ > 0; }
 
   size_t num_rows_reduced() const {
-    // TODO@tsantucci: isn't this actually num_cameras or num_obs, not
-    // num_keyframes?
     return has_pose_damping() ? num_rows_Q2Tr_ + num_keyframes_ * POSE_SIZE
                               : num_rows_Q2Tr_;
   }

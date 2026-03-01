@@ -114,15 +114,15 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::linearize_landmark(
     size_t pose_col_idx = kf_col_idx * POSE_SIZE;
 
     const auto& keyframe = keyframes.at(frame_idx);
-    const auto& T_w_i = keyframe.T_w_i;  // IMU-to-world
+    const auto& T_i_w = keyframe.T_i_w;
 
     // Get camera intrinsics and extrinsics from calibration
     ROOTBA_ASSERT(cam_id < calib.T_i_c.size());
-    const auto& T_i_c = calib.T_i_c[cam_id];  // camera-to-IMU
+    const auto& T_c_i = calib.T_i_c[cam_id].inverse();
     const auto& cam_model = calib.intrinsics[cam_id];
 
     // Compute transformation from world to camera frame
-    typename BalProblem<Scalar>::SE3 T_c_w = T_i_c.inverse() * T_w_i.inverse();
+    typename BalProblem<Scalar>::SE3 T_c_w = T_c_i * T_i_w;
 
     // Compute Jacobian w.r.t. camera pose and landmark
     typename BalBundleAdjustmentHelper<Scalar>::MatRP Jp_cam;
@@ -146,31 +146,27 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::linearize_landmark(
 
       /*
         Chain rule to get Jacobian w.r.t. IMU pose
-        Perturbation model: T_w_i_new = T_w_i * exp(ξ_imu)
-        This affects camera pose: T_w_c_new = T_w_i * exp(ξ_imu) * T_i_c
+        Left perturbation model: T_i_w_new = exp(ξ_imu) * T_i_w
+        This affects camera pose: T_c_w_new = T_c_i * exp(ξ_imu) * T_i_w
 
         Using adjoint property: T * exp(ξ) = exp(Ad(T) * ξ) * T
-        We get:
-        (1) T_w_i * exp(ξ_imu) * T_i_c =
-          T_w_i * T_i_c * exp(Ad(T_i_c^{-1}) * ξ_imu)
-        by eq. C:
-        (2) T_w_i * exp(ξ_imu) * T_i_c =
-          T_w_i * T_i_c * exp(Ad(T_i_c^{-1}) * ξ_imu)
+        A. T_c_i * exp(ξ_imu) = exp(Ad(T_c_i) * ξ_imu) * T_c_i
+        B. exp(ξ_imu) = T_i_c * exp(Ad(T_c_i) * ξ_imu) * T_c_i
 
-        T_w_c(e_cam) = T_w_c * exp(Ad(T_i_c^{-1}) * ξ_imu)
-
-        A. exp(Ad(T_i_c^{-1}) * ξ_imu) * T_i_c^{-1} = T_i_c^{-1} * exp(ξ_imu)
-        B. T_i_c * exp(Ad(T_i_c^{-1}) * ξ_imu) * T_i_c^{-1} = exp(ξ_imu)
-        C. exp(ξ_imu) = T_i_c * exp(Ad(T_i_c^{-1}) * ξ_imu) * T_i_c^{-1}
+        So, using B. in T_c_w_new
+        (1) T_c_i * exp(ξ_imu) * T_i_w =
+          T_c_i * (T_i_c * exp(Ad(T_c_i) * ξ_imu) * T_c_i) * T_i_w =
+          (T_c_i * T_i_c) * exp(Ad(T_c_i) * ξ_imu) * T_c_i * T_i_w =
+          exp(Ad(T_c_i) * ξ_imu) * T_c_w
 
         Therefore:
-          ξ_cam = Ad(T_i_c^{-1}) * ξ_imu
-          And: ∂r/∂ξ_imu = ∂r/∂ξ_cam * Ad(T_i_c^{-1}) = Jp_cam * Ad(T_i_c^{-1})
+          T_c_w(ξ_cam) = exp(Ad(T_c_i) * ξ_imu) * T_c_w =>
+          ξ_cam = Ad(T_c_i) * ξ_imu =>
+          ∂r/∂ξ_imu = ∂r/∂ξ_cam * ∂ξ_cam/∂ξ_imu = Jp_cam * Ad(T_c_i)
       */
 
-      // If we use a left perturbation model, d_cam_d_imu would be id.
-      Mat66 Ad_T_i_c_inv = T_i_c.inverse().Adj();
-      Mat66 d_cam_d_imu = Ad_T_i_c_inv;
+      Mat66 Ad_T_c_i = T_c_i.Adj();
+      Mat66 d_cam_d_imu = Ad_T_c_i;
       typename BalBundleAdjustmentHelper<Scalar>::MatRP Jp_imu =
           Jp_cam * d_cam_d_imu;
 

@@ -88,13 +88,13 @@ void BalBundleAdjustmentHelper<Scalar>::compute_error(
         CamId cam_id = tcid.cam_id;
 
         const auto& keyframe = keyframes.at(frame_idx);
-        const auto& T_w_i = keyframe.T_w_i;
+        const auto& T_i_w = keyframe.T_i_w;
 
-        const auto& T_i_c = calib.T_i_c[cam_id];
+        const auto& T_c_i = calib.T_i_c[cam_id].inverse();
         const auto& cam_model = calib.intrinsics[cam_id];
 
         // Compute transformation from world to camera frame
-        typename BalProblem<Scalar>::SE3 T_c_w = (T_w_i * T_i_c).inverse();
+        typename BalProblem<Scalar>::SE3 T_c_w = T_c_i * T_i_w;
 
         VecR res;
         const bool projection_valid = linearize_point(

@@ -57,7 +57,6 @@ class LandmarkBlockDynamic
     obs_to_kf_idx_.reserve(lm.obs.size());
 
     for (const auto& [tcid, obs] : lm.obs) {
-      // TODO@tsantucci: check that the observations are accessed in order?
       FrameIdx frame_idx = tcid.frame_id;
 
       // Check if this keyframe is already in pose_idx_

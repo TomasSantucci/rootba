@@ -101,7 +101,10 @@ BalFrameDisplay::BalFrameDisplay(FrameIdx frame_id) : frame_id_(frame_id) {}
 template <typename Scalar>
 void BalFrameDisplay::update(const BalProblem<Scalar>& bal_problem) {
   // update pose
-  T_w_i_ = bal_problem.keyframes().at(frame_id_).T_w_i.template cast<double>();
+  T_w_i_ = bal_problem.keyframes()
+               .at(frame_id_)
+               .T_i_w.inverse()
+               .template cast<double>();
 }
 
 void BalFrameDisplay::draw(bool selected,
