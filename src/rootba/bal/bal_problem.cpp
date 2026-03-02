@@ -467,9 +467,14 @@ void BalProblem<Scalar>::normalize(const double new_scale) {
     lm.p_w = scale * (lm.p_w - median);
   }
 
-  // update keyframes: center = scale * (center - median)
   for (auto& kf : keyframes_) {
-    kf.T_i_w.translation() = scale * (kf.T_i_w.translation() - median);
+    SE3 T_w_i = kf.T_i_w.inverse();
+    T_w_i.translation() = scale * (T_w_i.translation() - median);
+    kf.T_i_w = T_w_i.inverse();
+  }
+
+  for (auto& T_c_i : calib_.T_i_c) {
+    T_c_i.translation() *= scale;
   }
 }
 
