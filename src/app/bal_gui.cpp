@@ -81,7 +81,7 @@ int main(int argc, char** argv) {
   //       point_size = 1, cam_weight = 1, cam_size = 0.5
   pangolin::Var<int> point_size("ui.point_size", 2, 1, 5);
   pangolin::Var<int> cam_weight("ui.cam_weight", 2, 1, 5);
-  pangolin::Var<double> cam_size("ui.cam_size", 0.2, 0.1, 1.0);
+  pangolin::Var<double> cam_size("ui.cam_size", 20, 0.5, 50);
 
   pangolin::Var<int> min_image_size("ui.min_image_size", 320, 100, 3200);
   pangolin::Var<int> max_image_size("ui.max_image_size", 3200, 100, 3200);
@@ -145,7 +145,7 @@ int main(int argc, char** argv) {
   const double w = 640;
   const double h = 480;
   const double f = 400;
-  const double initial_zoom = 1;
+  const double initial_zoom = 20;
   pangolin::OpenGlRenderState camera_3d_display(
       pangolin::ProjectionMatrix(w, h, f, f, w / 2, h / 2, 1e-2, 1e5),
       pangolin::ModelViewLookAt(initial_zoom * -10, initial_zoom * 8,
@@ -208,7 +208,7 @@ int main(int argc, char** argv) {
     display_3d.Activate(camera_3d_display);
     glClearColor(0.93F, 0.94F, 0.95F, 1.0F);
     map_display.draw(show_frame, {point_size, cam_weight, cam_size});
-    pangolin::glDrawAxis(Sophus::SE3d().matrix(), 0.5);
+    pangolin::glDrawAxis(Sophus::SE3d().matrix(), 10.0);
 
     img_view_display.Activate();
 
