@@ -133,9 +133,17 @@ void LandmarkBlockBase<T, Scalar, POSE_SIZE>::linearize_landmark(
         obs.pos, lm_ptr_->p_w, T_c_w, cam_model, true, res, &Jp_cam, &Jl);
 
     if (!options_.use_valid_projections_only || valid) {
-      numerically_valid = numerically_valid && Jl.array().isFinite().all() &&
-                          Jp_cam.array().isFinite().all() &&
-                          res.array().isFinite().all();
+      numerically_valid = valid;
+
+      if (!Jl.array().isFinite().all()) {
+        LOG(WARNING) << "Jl has non-finite entries:\n" << Jl;
+        Jl.setZero();
+      }
+
+      if (!Jp_cam.array().isFinite().all()) {
+        LOG(WARNING) << "Jp_cam has non-finite entries:\n" << Jp_cam;
+        Jp_cam.setZero();
+      }
 
       const Scalar res_squared = res.squaredNorm();
       const auto [weighted_error, weight] =

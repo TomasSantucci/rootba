@@ -97,16 +97,16 @@ void BalBundleAdjustmentHelper<Scalar>::compute_error(
         typename BalProblem<Scalar>::SE3 T_c_w = T_c_i * T_i_w;
 
         VecR res;
-        const bool projection_valid = linearize_point(
+        const bool numerically_valid = linearize_point(
             obs.pos, lm.p_w, T_c_w, cam_model, ignore_validity_check, res);
 
-        const bool numerically_valid = res.array().isFinite().all();
-
-        const Scalar res_squared = res.squaredNorm();
-        const auto [weighted_error, weight] =
-            compute_error_weight(options.residual, res_squared);
-        error_accu.add(numerically_valid, projection_valid,
-                       std::sqrt(res_squared), weighted_error);
+        if (numerically_valid) {
+          const Scalar res_squared = res.squaredNorm();
+          const auto [weighted_error, weight] =
+              compute_error_weight(options.residual, res_squared);
+          error_accu.add(numerically_valid, numerically_valid,
+                         std::sqrt(res_squared), weighted_error);
+        }
       }
     }
 
@@ -140,7 +140,7 @@ bool BalBundleAdjustmentHelper<Scalar>::linearize_point(
   }
   res -= obs;
 
-  // valid &= res.array().isFinite().all();
+  projection_valid &= res.array().isFinite().all();
 
   if (!ignore_validity_check && !projection_valid) {
     return false;
