@@ -217,6 +217,7 @@ rm -rf "$BUILD_PANGOLIN"
 mkdir -p "$BUILD_PANGOLIN"
 pushd "$BUILD_PANGOLIN"
 cmake ../../Pangolin "${COMMON_CMAKE_ARGS[@]}" \
+    -DCMAKE_CXX_FLAGS="${EXTRA_CXX_FLAGS} -include cstdint" \
     -DCMAKE_FIND_FRAMEWORK=LAST \
     -DBUILD_EXAMPLES=OFF \
     -DBUILD_TOOLS=OFF \
