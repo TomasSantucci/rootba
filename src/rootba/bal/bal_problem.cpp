@@ -518,6 +518,75 @@ void BalProblem<Scalar>::filter_obs(const double threshold) {
 }
 
 template <typename Scalar>
+void BalProblem<Scalar>::filter_kf(int min_obs_per_kf) {
+  CHECK_GE(min_obs_per_kf, 0);
+
+  if (min_obs_per_kf <= 0) {
+    return;
+  }
+
+  if (!quiet_) {
+    LOG(INFO) << "Filtering keyframes with fewer than {} observations"_format(
+        min_obs_per_kf);
+  }
+
+  // Count total observations per keyframe
+  std::vector<int> obs_per_kf(keyframes_.size(), 0);
+  for (const auto& lm : landmarks_) {
+    for (const auto& [tcid, obs] : lm.obs) {
+      obs_per_kf[tcid.frame_id]++;
+    }
+  }
+
+  // Build a map from old keyframe index -> new index (-1 if removed)
+  std::vector<int> kf_new_idx(keyframes_.size(), -1);
+  Keyframes filtered_keyframes;
+  for (size_t i = 0; i < keyframes_.size(); ++i) {
+    if (obs_per_kf[i] >= min_obs_per_kf) {
+      kf_new_idx[i] = static_cast<int>(filtered_keyframes.size());
+      filtered_keyframes.push_back(keyframes_[i]);
+    }
+  }
+
+  const int num_removed = static_cast<int>(keyframes_.size()) -
+                          static_cast<int>(filtered_keyframes.size());
+
+  if (num_removed == 0) {
+    return;
+  }
+
+  keyframes_ = std::move(filtered_keyframes);
+
+  // Update observations: remove those pointing to removed keyframes,
+  // and re-index the remaining ones.
+  for (auto& lm : landmarks_) {
+    std::map<TimeCamId, Observation> new_obs;
+    for (auto& [tcid, obs] : lm.obs) {
+      int new_idx = kf_new_idx[tcid.frame_id];
+      if (new_idx >= 0) {
+        TimeCamId new_tcid(static_cast<size_t>(new_idx), tcid.cam_id);
+        new_obs[new_tcid] = obs;
+      }
+    }
+    lm.obs = std::move(new_obs);
+  }
+
+  // Remove landmarks with fewer than 2 observations
+  Landmarks filtered_landmarks;
+  std::copy_if(landmarks_.begin(), landmarks_.end(),
+               std::back_inserter(filtered_landmarks),
+               [](const auto& lm) { return lm.obs.size() >= 2; });
+  landmarks_ = std::move(filtered_landmarks);
+
+  if (!quiet_) {
+    LOG(INFO) << "After filter_kf: removed {} keyframes, {} keyframes, "
+                 "{} landmarks, {} observations remaining"_format(
+                     num_removed, num_keyframes(), num_landmarks(),
+                     num_observations());
+  }
+}
+
+template <typename Scalar>
 void BalProblem<Scalar>::perturb(double rotation_sigma,
                                  double translation_sigma,
                                  double landmark_sigma, int seed) {
@@ -797,6 +866,9 @@ BalProblem<Scalar> load_normalized_bal_problem(
 
   // Filter observations of points closer than threshold to the camera
   bal_problem.filter_obs(options.init_depth_threshold);
+
+  // Filter keyframes with too few observations
+  bal_problem.filter_kf(options.min_obs_per_kf);
 
   // convert to Scalar if needed
   BalProblem<Scalar> res;

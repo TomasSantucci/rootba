@@ -149,6 +149,8 @@ class BalProblem {
 
   void filter_obs(double threshold);
 
+  void filter_kf(int min_obs_per_kf);
+
   void postprocress(const BalDatasetOptions& options,
                     PipelineTimingSummary* timing_summary = nullptr);
 

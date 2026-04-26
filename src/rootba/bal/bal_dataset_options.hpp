@@ -89,6 +89,14 @@ struct BalDatasetOptions : public VisitableOptions<BalDatasetOptions> {
           "Threshold for filtering observations that are too close "
           "to the camera after loading the problem. (0 means no filtering)"));
 
+  VISITABLE_META(
+      int, min_obs_per_kf,
+      init(0).help(
+          "Minimum number of observations required to keep a keyframe. "
+          "Keyframes with fewer observations are removed, along with their "
+          "observations. Landmarks with fewer than 2 remaining observations "
+          "are also removed. (0 means no filtering)"));
+
   VISITABLE_META(bool, quiet,
                  init(false).help(
                      "if true, skip INFO level log output when loading data"));
