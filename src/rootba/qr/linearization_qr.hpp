@@ -73,7 +73,7 @@ class LinearizationQR : public LinearOperator<Scalar_> {
   // dependencies and better separate the concerns. This can also simplify some
   // options assignment code.
   struct Options {
-    int reduction_alg = 1;
+    int reduction_alg = 0;
     typename LandmarkBlock<Scalar>::Options lb_options;
   };
 
@@ -130,8 +130,8 @@ class LinearizationQR : public LinearOperator<Scalar_> {
     };
 
     tbb::blocked_range<size_t> range(0, num_landmarks);
-    const bool numerically_valid =
-        tbb::parallel_reduce(range, true, body, std::logical_and<>());
+    const bool numerically_valid = tbb::parallel_deterministic_reduce(
+        range, true, body, std::logical_and<>());
 
     return numerically_valid;
   }
@@ -174,8 +174,8 @@ class LinearizationQR : public LinearOperator<Scalar_> {
     };
 
     tbb::blocked_range<size_t> range(0, landmark_block_idx_.size());
-    Scalar l_diff =
-        tbb::parallel_reduce(range, Scalar(0), body, std::plus<Scalar>());
+    Scalar l_diff = tbb::parallel_deterministic_reduce(range, Scalar(0), body,
+                                                       std::plus<Scalar>());
     return l_diff;
   }
 
@@ -264,7 +264,7 @@ class LinearizationQR : public LinearOperator<Scalar_> {
 
     // go over all host frames
     tbb::blocked_range<size_t> range(0, landmark_block_idx_.size());
-    VecX res = tbb::parallel_reduce(range, init, body, join);
+    VecX res = tbb::parallel_deterministic_reduce(range, init, body, join);
 
     if (has_pose_damping()) {
       res += (x_r.tail(POSE_SIZE * num_keyframes_).array() *
@@ -325,7 +325,7 @@ class LinearizationQR : public LinearOperator<Scalar_> {
 
     // go over all landmarks
     tbb::blocked_range<size_t> range(0, landmark_block_idx_.size());
-    tbb::parallel_reduce(range, r);
+    tbb::parallel_deterministic_reduce(range, r);
 
     if (has_pose_damping()) {
       r.res += (x_pose.array() * pose_damping_diagonal_).matrix();
@@ -403,7 +403,7 @@ class LinearizationQR : public LinearOperator<Scalar_> {
     return res;
   }
 
-  // Verstion with direct mutex guarded writes
+  // Verstion with direct mutex guarded writes (not deterministic)
   VecX get_Q2TJp_T_Q2TJp_mult_x_v3(const VecX& x_pose) const {
     ROOTBA_ASSERT(x_pose.size() == signed_cast(num_keyframes_ * POSE_SIZE));
 
@@ -444,7 +444,7 @@ class LinearizationQR : public LinearOperator<Scalar_> {
     init.setZero(POSE_SIZE * num_keyframes_);
 
     tbb::blocked_range<size_t> range(0, landmark_block_idx_.size());
-    VecX res = tbb::parallel_reduce(range, init, body, join);
+    VecX res = tbb::parallel_deterministic_reduce(range, init, body, join);
 
     // Note: No need to consider pose damping, since the residual part is 0
 
@@ -481,7 +481,7 @@ class LinearizationQR : public LinearOperator<Scalar_> {
     Reductor r(num_keyframes_ * POSE_SIZE, landmark_blocks_);
 
     tbb::blocked_range<size_t> range(0, landmark_block_idx_.size());
-    tbb::parallel_reduce(range, r);
+    tbb::parallel_deterministic_reduce(range, r);
 
     if (has_pose_damping()) {
       r.res.array() += pose_damping_diagonal_;
@@ -520,7 +520,7 @@ class LinearizationQR : public LinearOperator<Scalar_> {
     Reductor r(num_keyframes_ * POSE_SIZE, landmark_blocks_);
 
     tbb::blocked_range<size_t> range(0, landmark_block_idx_.size());
-    tbb::parallel_reduce(range, r);
+    tbb::parallel_deterministic_reduce(range, r);
 
     // NOTE: no damping here (it's used for Jp column scaling)
 
@@ -551,7 +551,7 @@ class LinearizationQR : public LinearOperator<Scalar_> {
     Reductor r(landmark_blocks_);
 
     tbb::blocked_range<size_t> range(0, landmark_block_idx_.size());
-    tbb::parallel_reduce(range, r);
+    tbb::parallel_deterministic_reduce(range, r);
 
     if (has_pose_damping()) {
       r.accum.add_diag(
@@ -586,7 +586,7 @@ class LinearizationQR : public LinearOperator<Scalar_> {
     Reductor r(landmark_blocks_);
 
     tbb::blocked_range<size_t> range(0, landmark_block_idx_.size());
-    tbb::parallel_reduce(range, r);
+    tbb::parallel_deterministic_reduce(range, r);
 
     if (has_pose_damping()) {
       r.accum.add_diag(
@@ -698,7 +698,7 @@ class LinearizationQR : public LinearOperator<Scalar_> {
                landmark_blocks_, bal_problem_);
 
     tbb::blocked_range<size_t> range(0, landmark_block_idx_.size());
-    tbb::parallel_reduce(range, r);
+    tbb::parallel_deterministic_reduce(range, r);
 
     if (r.numerically_valid) {
       if (compute_precond_block_diagonal) {
@@ -791,7 +791,7 @@ class LinearizationQR : public LinearOperator<Scalar_> {
                compute_precond_block_diagonal, landmark_blocks_);
 
     tbb::blocked_range<size_t> range(0, landmark_block_idx_.size());
-    tbb::parallel_reduce(range, r);
+    tbb::parallel_deterministic_reduce(range, r);
 
     // add pose damping to preconditioners
     if (has_pose_damping()) {

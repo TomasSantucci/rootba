@@ -115,7 +115,7 @@ void BalBundleAdjustmentHelper<Scalar>::compute_error(
 
   // go over all host frames
   tbb::blocked_range<int> range(0, bal_problem.num_landmarks());
-  ResidualInfoAccu error_accu = tbb::parallel_reduce(
+  ResidualInfoAccu error_accu = tbb::parallel_deterministic_reduce(
       range, ResidualInfoAccu(), body, ResidualInfoAccu::join);
 
   // output accumulated error
