@@ -118,6 +118,20 @@ void BalBundleAdjustmentHelper<Scalar>::compute_error(
   ResidualInfoAccu error_accu = tbb::parallel_deterministic_reduce(
       range, ResidualInfoAccu(), body, ResidualInfoAccu::join);
 
+  // Relative pose constraints contribute to the same cost that LM compares
+  // against the model cost change, so they have to be accumulated here as
+  // well. They have no notion of projection validity, so they always count as
+  // valid.
+  for (const auto& c : bal_problem.rel_pose_constraints()) {
+    const Vec6 res =
+        c.sqrt_info * relative_pose_error(c.T_a_b,
+                                          keyframes.at(c.frame_a).T_i_w,
+                                          keyframes.at(c.frame_b).T_i_w);
+    const Scalar res_squared = res.squaredNorm();
+    error_accu.add(std::isfinite(res_squared), true, std::sqrt(res_squared),
+                   0.5 * res_squared);
+  }
+
   // output accumulated error
   error = error_accu.info;
 }

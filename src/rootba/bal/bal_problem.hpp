@@ -43,6 +43,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <glog/logging.h>
 
 #include "rootba/bal/common_types.hpp"
+#include "rootba/bal/rel_pose_constraint.hpp"
 #include "rootba/util/cast.hpp"
 
 namespace rootba {
@@ -127,6 +128,7 @@ class BalProblem {
 
   using Landmarks = std::vector<Landmark>;
   using Keyframes = std::vector<Keyframe>;
+  using RelPoseConstraints = std::vector<RelPoseConstraint<Scalar>>;
   using Calibration = basalt::Calibration<Scalar>;
 
   BalProblem() = default;
@@ -151,6 +153,10 @@ class BalProblem {
 
   void filter_kf(int min_obs_per_kf);
 
+  void load_pose_graph(const std::string& path,
+                       double default_sigma_translation,
+                       double default_sigma_rotation);
+
   void postprocress(const BalDatasetOptions& options,
                     PipelineTimingSummary* timing_summary = nullptr);
 
@@ -160,12 +166,21 @@ class BalProblem {
   inline const Landmarks& landmarks() const { return landmarks_; }
   inline const Keyframes& keyframes() const { return keyframes_; }
   inline const Calibration& calib() const { return calib_; }
+  inline const RelPoseConstraints& rel_pose_constraints() const {
+    return rel_pose_constraints_;
+  }
 
   inline Landmarks& landmarks() { return landmarks_; }
   inline Keyframes& keyframes() { return keyframes_; }
+  inline RelPoseConstraints& rel_pose_constraints() {
+    return rel_pose_constraints_;
+  }
 
   inline int num_landmarks() const { return signed_cast(landmarks_.size()); }
   inline int num_keyframes() const { return signed_cast(keyframes_.size()); }
+  inline int num_rel_pose_constraints() const {
+    return signed_cast(rel_pose_constraints_.size());
+  }
   int num_observations() const;
   int max_num_observations_per_lm() const;
   double compute_rcs_sparsity() const;
@@ -188,6 +203,11 @@ class BalProblem {
       res.landmarks_[i] = this->landmarks_[i].template cast<Scalar2>();
     }
 
+    res.rel_pose_constraints_.reserve(this->rel_pose_constraints_.size());
+    for (const auto& c : this->rel_pose_constraints_) {
+      res.rel_pose_constraints_.push_back(c.template cast<Scalar2>());
+    }
+
     res.calib_ = this->calib_.template cast<Scalar2>();
 
     res.quiet_ = quiet_;
@@ -205,6 +225,7 @@ class BalProblem {
 
   Landmarks landmarks_;
   Keyframes keyframes_;
+  RelPoseConstraints rel_pose_constraints_;
 
   Calibration calib_;
 

@@ -12,6 +12,7 @@ target_sources(rootba
      common_types.hpp
      bal_problem.hpp
      bal_problem_io.hpp
+     rel_pose_constraint.hpp
      residual_info.hpp
      snavely_projection.hpp
      solver_options.hpp
@@ -29,6 +30,7 @@ if(ROOTBA_ENABLE_TESTING)
   rootba_add_test(test_librootba_bal
       bal_bundle_adjustment_helper.test.cpp
       bal_problem_io.test.cpp
+      rel_pose_constraint.test.cpp
       snavely_projection.test.cpp
     LINK_LIBRARIES
       rootba

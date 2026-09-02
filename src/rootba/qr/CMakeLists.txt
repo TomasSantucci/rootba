@@ -5,6 +5,7 @@ target_sources(rootba_qr
     landmark_block.hpp
     linearization_qr.hpp
     linearization_utils.hpp
+    rel_pose_block.hpp
   PRIVATE
     landmark_block.cpp
     landmark_block_base.hpp
@@ -23,6 +24,7 @@ if(ROOTBA_ENABLE_TESTING)
 
   rootba_add_test(test_librootba_qr
       linearization_qr.test.cpp
+      rel_pose_block.test.cpp
     LINK_LIBRARIES
       rootba_qr
       rootba_testing

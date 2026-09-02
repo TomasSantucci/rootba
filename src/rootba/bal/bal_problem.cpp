@@ -291,6 +291,8 @@ void BalProblem<Scalar>::load_basalt(const std::string& path_str) {
     }
   }
 
+  rel_pose_constraints_.clear();
+
   if (!quiet_) {
     LOG(INFO) << "Loaded Basalt format: " << num_keyframes() << " keyframes, "
               << num_landmarks() << " landmarks, " << num_observations()
@@ -335,7 +337,9 @@ bool BalProblem<Scalar>::save_basalt(const std::string& path) {
     const auto& lm = landmarks_[lm_id];
     for (const auto& [tcid, obs] : lm.obs) {
       nlohmann::json obs_json;
-      obs_json["kf_id"] = tcid.frame_id;
+      // keyframes are written out with their `t_ns` as id, so observations
+      // have to reference them the same way for the file to be loadable again
+      obs_json["kf_id"] = keyframes_[tcid.frame_id].t_ns;
       obs_json["cam_id"] = tcid.cam_id;
       obs_json["lm_id"] = lm_id;
       obs_json["pos"] = {obs.pos.x(), obs.pos.y()};
@@ -476,6 +480,209 @@ void BalProblem<Scalar>::normalize(const double new_scale) {
   for (auto& T_c_i : calib_.T_i_c) {
     T_c_i.translation() *= scale;
   }
+
+  // Relative pose measurements live in the same metric space as the map, so
+  // their translation part scales along. Dividing the corresponding columns of
+  // the sqrt information keeps the weighted residual (and thus the cost)
+  // invariant under normalization.
+  for (auto& c : rel_pose_constraints_) {
+    c.T_a_b.translation() *= scale;
+    c.sqrt_info.template leftCols<3>() /= scale;
+  }
+}
+
+// Load a pose graph produced by a SLAM system and turn its edges into relative
+// pose constraints on the keyframe poses.
+//
+// The file is JSON with a single "edges" array. Keyframes are referenced by the
+// same ids as in the input map (for the basalt format that is the keyframe
+// timestamp in nanoseconds), and the topology is arbitrary: sequential
+// odometry, covisibility and loop closure edges can be mixed freely.
+//
+//   {
+//     "edges": [
+//       {
+//         "kf_id_a": 1403636579763555584,
+//         "kf_id_b": 1403636580113555456,
+//         "T_a_b": [qw, qx, qy, qz, tx, ty, tz],
+//         "sqrt_info": [ ... 36 values, row major ... ]
+//       },
+//       ...
+//     ]
+//   }
+//
+// Per edge:
+//
+//  - "kf_id_a", "kf_id_b" (required): the two keyframes the edge connects.
+//    Edges referencing an id that is not in the map are skipped with a warning.
+//
+//  - "T_a_b" (optional): the measured pose of keyframe b's body (IMU) frame
+//    expressed in keyframe a's body frame, as [qw, qx, qy, qz, tx, ty, tz] —
+//    i.e. the same layout and frame convention as "T_w_i" in the map file, so
+//    that T_a_b == T_a_w * T_w_b. If omitted, the relative pose is measured
+//    from the keyframe poses of the input map, which turns the edge into a
+//    "keep the input geometry along this connection" constraint.
+//
+//  - uncertainty (optional), the first of these that is present wins:
+//      "sqrt_info"   36 values, row major: an upper triangular (or any) square
+//                    root S of the information matrix, so that the weighted
+//                    residual is S * res.
+//      "information" 36 values, row major: the information matrix itself
+//                    (inverse covariance); its Cholesky factor is used.
+//      "sigmas"      6 values: independent standard deviations, ordered
+//                    [tx, ty, tz, rx, ry, rz].
+//    Edges with none of these fall back to `default_sigma_translation` /
+//    `default_sigma_rotation`.
+//
+// Residuals are ordered [translation; rotation], matching `se3_logd`.
+template <typename Scalar>
+void BalProblem<Scalar>::load_pose_graph(const std::string& path,
+                                         const double default_sigma_translation,
+                                         const double default_sigma_rotation) {
+  using Quaternion = Eigen::Quaternion<Scalar>;
+  using Mat6 = Mat<Scalar, 6, 6>;
+
+  if (path.empty()) {
+    return;
+  }
+
+  CHECK_GT(default_sigma_translation, 0.0);
+  CHECK_GT(default_sigma_rotation, 0.0);
+
+  std::ifstream file(path);
+  if (!file.is_open()) {
+    throw std::runtime_error("Failed to open pose graph file: " + path);
+  }
+
+  nlohmann::json j;
+  try {
+    file >> j;
+  } catch (const std::exception& e) {
+    throw std::runtime_error("Failed to parse pose graph JSON '" + path +
+                             "': " + std::string(e.what()));
+  }
+
+  if (!j.contains("edges")) {
+    throw std::runtime_error("Pose graph file '" + path +
+                             "' has no 'edges' array");
+  }
+
+  // map keyframe ids to indices
+  std::unordered_map<size_t, FrameIdx> kf_id_map;
+  kf_id_map.reserve(keyframes_.size());
+  for (size_t i = 0; i < keyframes_.size(); ++i) {
+    kf_id_map[keyframes_[i].t_ns] = signed_cast(i);
+  }
+
+  const size_t num_constraints_before = rel_pose_constraints_.size();
+  size_t num_unknown_kf = 0;
+  size_t num_self_edges = 0;
+  size_t num_measured_from_map = 0;
+
+  for (const auto& edge : j["edges"]) {
+    CHECK(edge.contains("kf_id_a") && edge.contains("kf_id_b"))
+        << "pose graph edge is missing 'kf_id_a' and/or 'kf_id_b': "
+        << edge.dump();
+
+    const size_t id_a = edge["kf_id_a"];
+    const size_t id_b = edge["kf_id_b"];
+
+    const auto it_a = kf_id_map.find(id_a);
+    const auto it_b = kf_id_map.find(id_b);
+    if (it_a == kf_id_map.end() || it_b == kf_id_map.end()) {
+      ++num_unknown_kf;
+      continue;
+    }
+
+    RelPoseConstraint<Scalar> c;
+    c.frame_a = it_a->second;
+    c.frame_b = it_b->second;
+
+    if (c.frame_a == c.frame_b) {
+      ++num_self_edges;
+      continue;
+    }
+
+    if (edge.contains("T_a_b")) {
+      // T_a_b is [qw, qx, qy, qz, tx, ty, tz]
+      const auto& T_a_b_data = edge["T_a_b"];
+      CHECK_EQ(T_a_b_data.size(), 7u)
+          << "expected 7 values [qw, qx, qy, qz, tx, ty, tz] for 'T_a_b'";
+      Quaternion q(static_cast<Scalar>(T_a_b_data[0]),
+                   static_cast<Scalar>(T_a_b_data[1]),
+                   static_cast<Scalar>(T_a_b_data[2]),
+                   static_cast<Scalar>(T_a_b_data[3]));
+      q.normalize();
+      Vec3 t(static_cast<Scalar>(T_a_b_data[4]),
+             static_cast<Scalar>(T_a_b_data[5]),
+             static_cast<Scalar>(T_a_b_data[6]));
+      c.T_a_b = SE3(q, t);
+    } else {
+      // measure the relative pose from the input map
+      c.T_a_b = keyframes_[c.frame_a].T_i_w * keyframes_[c.frame_b].T_i_w.inverse();
+      ++num_measured_from_map;
+    }
+
+    if (edge.contains("sqrt_info")) {
+      const auto& data = edge["sqrt_info"];
+      CHECK_EQ(data.size(), 36u)
+          << "expected a row-major 6x6 matrix for 'sqrt_info'";
+      for (int row = 0; row < 6; ++row) {
+        for (int col = 0; col < 6; ++col) {
+          c.sqrt_info(row, col) = static_cast<Scalar>(data[row * 6 + col]);
+        }
+      }
+    } else if (edge.contains("information")) {
+      const auto& data = edge["information"];
+      CHECK_EQ(data.size(), 36u)
+          << "expected a row-major 6x6 matrix for 'information'";
+      Mat6 information;
+      for (int row = 0; row < 6; ++row) {
+        for (int col = 0; col < 6; ++col) {
+          information(row, col) = static_cast<Scalar>(data[row * 6 + col]);
+        }
+      }
+      const Eigen::LLT<Mat6> llt(information);
+      CHECK(llt.info() == Eigen::Success)
+          << "'information' of edge " << id_a << " -> " << id_b
+          << " is not positive definite";
+      // information == L * L', so S = L' gives S' * S == information
+      c.sqrt_info = llt.matrixU();
+    } else if (edge.contains("sigmas")) {
+      const auto& data = edge["sigmas"];
+      CHECK_EQ(data.size(), 6u)
+          << "expected 6 values [tx, ty, tz, rx, ry, rz] for 'sigmas'";
+      Vec<Scalar, 6> diag;
+      for (int i = 0; i < 6; ++i) {
+        const Scalar sigma = static_cast<Scalar>(data[i]);
+        CHECK_GT(sigma, Scalar(0)) << "'sigmas' must be positive";
+        diag(i) = Scalar(1) / sigma;
+      }
+      c.sqrt_info = diag.asDiagonal();
+    } else {
+      c.set_sigmas(Scalar(default_sigma_translation),
+                   Scalar(default_sigma_rotation));
+    }
+
+    rel_pose_constraints_.push_back(c);
+  }
+
+  const size_t num_added = rel_pose_constraints_.size() - num_constraints_before;
+
+  if (num_unknown_kf > 0) {
+    LOG(WARNING) << "Pose graph '{}': skipped {} edges referencing keyframes "
+                    "that are not in the map"_format(path, num_unknown_kf);
+  }
+  if (num_self_edges > 0) {
+    LOG(WARNING) << "Pose graph '{}': skipped {} edges connecting a keyframe "
+                    "to itself"_format(path, num_self_edges);
+  }
+
+  if (!quiet_) {
+    LOG(INFO) << "Loaded pose graph '{}': {} relative pose constraints ({} "
+                 "with the relative pose measured from the input map)"_format(
+                     path, num_added, num_measured_from_map);
+  }
 }
 
 template <typename Scalar>
@@ -578,11 +785,31 @@ void BalProblem<Scalar>::filter_kf(int min_obs_per_kf) {
                [](const auto& lm) { return lm.obs.size() >= 2; });
   landmarks_ = std::move(filtered_landmarks);
 
+  // Re-index relative pose constraints, dropping those that reference a
+  // removed keyframe.
+  const size_t num_constraints_before = rel_pose_constraints_.size();
+  RelPoseConstraints filtered_constraints;
+  for (auto& c : rel_pose_constraints_) {
+    const int new_a = kf_new_idx[c.frame_a];
+    const int new_b = kf_new_idx[c.frame_b];
+    if (new_a >= 0 && new_b >= 0) {
+      c.frame_a = new_a;
+      c.frame_b = new_b;
+      filtered_constraints.push_back(c);
+    }
+  }
+  rel_pose_constraints_ = std::move(filtered_constraints);
+
   if (!quiet_) {
     LOG(INFO) << "After filter_kf: removed {} keyframes, {} keyframes, "
                  "{} landmarks, {} observations remaining"_format(
                      num_removed, num_keyframes(), num_landmarks(),
                      num_observations());
+    if (num_constraints_before > 0) {
+      LOG(INFO) << "After filter_kf: {} of {} relative pose constraints "
+                   "remaining"_format(rel_pose_constraints_.size(),
+                                      num_constraints_before);
+    }
   }
 }
 
@@ -853,6 +1080,12 @@ BalProblem<Scalar> load_normalized_bal_problem(
   bal_problem.load_calibration(options.calibration_file);
 
   const double time_load = timer.reset();
+
+  // load the pose graph before the map is rescaled by `normalize` (which
+  // rescales the measurements along with the map) and corrupted by `perturb`
+  bal_problem.load_pose_graph(options.pose_graph_file,
+                              options.pose_graph_sigma_translation,
+                              options.pose_graph_sigma_rotation);
 
   // normalize to fixed scale and center (as double, since there are some
   // overflow issues with float for large problems)

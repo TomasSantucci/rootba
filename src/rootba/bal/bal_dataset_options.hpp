@@ -97,6 +97,25 @@ struct BalDatasetOptions : public VisitableOptions<BalDatasetOptions> {
           "observations. Landmarks with fewer than 2 remaining observations "
           "are also removed. (0 means no filtering)"));
 
+  VISITABLE_META(
+      std::string, pose_graph_file,
+      init("").help(
+          "pose graph file whose edges are added as relative pose constraints "
+          "between keyframes. Keyframes are referenced by the same ids as in "
+          "the input map. (empty means no constraints)"));
+
+  VISITABLE_META(
+      double, pose_graph_sigma_translation,
+      init(0.05).help("standard deviation of the translation part of pose "
+                      "graph edges that don't specify their own uncertainty, "
+                      "in the metric units of the input dataset"));
+
+  VISITABLE_META(
+      double, pose_graph_sigma_rotation,
+      init(0.01).help("standard deviation of the rotation part of pose graph "
+                      "edges that don't specify their own uncertainty, in "
+                      "radians"));
+
   VISITABLE_META(bool, quiet,
                  init(false).help(
                      "if true, skip INFO level log output when loading data"));

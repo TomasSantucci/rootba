@@ -53,6 +53,7 @@ class BalBundleAdjustmentHelper {
   using Vec2 = Mat<Scalar, 2, 1>;
   using Vec3 = Mat<Scalar, 3, 1>;
   using Vec4 = Mat<Scalar, 4, 1>;
+  using Vec6 = Mat<Scalar, 6, 1>;
   using VecR = Mat<Scalar, RESIDUAL_SIZE, 1>;
 
   using Mat3 = Mat<Scalar, 3, 3>;
